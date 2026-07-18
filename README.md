@@ -277,7 +277,58 @@ See LICENSE file for details.
 
 ## Changelog
 
-### v0.1.0 (Current) - 2026-07-19
+### v0.1.1 (Current) - 2026-07-19
+
+**FreeRTOS插件修复**
+
+1. **任务解析逻辑修复**
+   - 修正 `List_t` 结构遍历方式：直接使用 List_t 大小而非指针数组
+   - 修正 TCB 地址计算：从 ListItem_t 地址减去 `xStateListItem` 偏移
+   - 修正任务名称读取：`pcTaskName` 是字符数组而非指针，直接从 TCB 读取
+   - 添加无效任务过滤：优先级 >= 32、栈地址不在有效范围、名称含 `\xff` 的任务被过滤
+
+2. **Profile配置修复**
+   - 修正 `os.name` 为 `freertos`（而非 `freertos_v11p3p0`），与插件注册一致
+   - 添加 `os.version` 字段
+   - 修正内存区域配置，使用单一 RAM 区域
+
+**线程同步操作增强**
+
+1. **ThreadX测试固件**
+   - 添加 thread 8/9，实现互斥锁优先级继承和队列通信
+   - 添加 queue_1、semaphore_1、mutex_1（带优先级继承）、event_flags_1
+   - 实现线程间复杂同步模式：事件标志触发、队列消息传递、互斥锁竞争
+
+2. **FreeRTOS测试固件**
+   - 添加 10 个任务，包含多种优先级（0-7）
+   - 添加 2 个互斥锁（xMutex1/xMutex2）、2 个队列（xQueue1/xQueue2）
+   - 添加二进制信号量（xBinarySem）和计数信号量（xCountSem）
+   - 添加 2 个事件组（xEventGrp1/xEventGrp2）和 2 个定时器（xTimer1/xTimer2）
+   - 实现复杂同步模式：互斥锁竞争、信号量同步、事件组等待、定时器触发
+
+**测试用例完善**
+
+1. **单元测试**
+   - `test_core.py`: 17 个测试用例全部通过
+   - `test_elf_parser_universality.py`: 8 个测试用例全部通过
+
+2. **QEMU测试场景**
+   - ThreadX: 成功解析 8 个线程、2 个信号量、2 个互斥锁、2 个队列、2 个事件标志、2 个定时器
+   - FreeRTOS: 成功解析 12 个任务（IDLE、TimerT、Recv、Event1、Mutex1、Mutex2、Sem1、Sender、Event2、HighPri、Sem2、Tmr Svc）
+
+**文件修改**
+
+- [plugins/rtos/freertos/freertos_v11p3p0.py](file:///Users/yangtao/Documents/elf_parser/plugins/rtos/freertos/freertos_v11p3p0.py) - 修复任务解析逻辑
+- [profiles/test/qemu_m4_freertos.yaml](file:///Users/yangtao/Documents/elf_parser/profiles/test/qemu_m4_freertos.yaml) - 修复OS配置
+- [profiles/test/qemu_m4_threadx.yaml](file:///Users/yangtao/Documents/elf_parser/profiles/test/qemu_m4_threadx.yaml) - 修复内存区域配置
+- [tests/qemu_m4_freertos/firmware/main.c](file:///Users/yangtao/Documents/elf_parser/tests/qemu_m4_freertos/firmware/main.c) - 丰富线程同步操作
+- [tests/qemu_m4_freertos/firmware/FreeRTOSConfig.h](file:///Users/yangtao/Documents/elf_parser/tests/qemu_m4_freertos/firmware/FreeRTOSConfig.h) - 增加最大优先级数
+- [tests/qemu_m4_threadx/firmware/sample_threadx.c](file:///Users/yangtao/Documents/elf_parser/tests/qemu_m4_threadx/firmware/sample_threadx.c) - 丰富线程同步操作
+- [test_simple.py](file:///Users/yangtao/Documents/elf_parser/test_simple.py) - 修复 `is_32bit()` 调用
+
+---
+
+### v0.1.0 - 2026-07-19
 
 **核心改进**
 
