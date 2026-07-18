@@ -56,35 +56,26 @@ class FreeRTOSV11Plugin(OSPlugin):
             return tasks
         
         ready_lists_addr = ready_lists_sym['address']
-        max_priority = 32
+        max_priority = 8
+        
+        list_struct = elf_parser.get_struct_type('List_t')
+        list_size = list_struct.get('byte_size', 20) if list_struct else 20
         
         for priority in range(max_priority):
-            list_addr = ready_lists_addr + priority * (4 if is_32bit else 8)
-            list_ptr = dump_reader.read_pointer(list_addr, is_32bit)
-            
-            if list_ptr:
-                tasks.extend(self._parse_task_list(list_ptr, elf_parser, dump_reader, is_32bit))
+            list_addr = ready_lists_addr + priority * list_size
+            tasks.extend(self._parse_task_list(list_addr, elf_parser, dump_reader, is_32bit))
         
         suspended_list_sym = elf_parser.get_symbol_by_name('xSuspendedTaskList')
         if suspended_list_sym:
-            suspended_list_addr = suspended_list_sym['address']
-            suspended_list_ptr = dump_reader.read_pointer(suspended_list_addr, is_32bit)
-            if suspended_list_ptr:
-                tasks.extend(self._parse_task_list(suspended_list_ptr, elf_parser, dump_reader, is_32bit))
+            tasks.extend(self._parse_task_list(suspended_list_sym['address'], elf_parser, dump_reader, is_32bit))
         
         delayed_list1_sym = elf_parser.get_symbol_by_name('xDelayedTaskList1')
         if delayed_list1_sym:
-            delayed_list1_addr = delayed_list1_sym['address']
-            delayed_list1_ptr = dump_reader.read_pointer(delayed_list1_addr, is_32bit)
-            if delayed_list1_ptr:
-                tasks.extend(self._parse_task_list(delayed_list1_ptr, elf_parser, dump_reader, is_32bit))
+            tasks.extend(self._parse_task_list(delayed_list1_sym['address'], elf_parser, dump_reader, is_32bit))
         
         delayed_list2_sym = elf_parser.get_symbol_by_name('xDelayedTaskList2')
         if delayed_list2_sym:
-            delayed_list2_addr = delayed_list2_sym['address']
-            delayed_list2_ptr = dump_reader.read_pointer(delayed_list2_addr, is_32bit)
-            if delayed_list2_ptr:
-                tasks.extend(self._parse_task_list(delayed_list2_ptr, elf_parser, dump_reader, is_32bit))
+            tasks.extend(self._parse_task_list(delayed_list2_sym['address'], elf_parser, dump_reader, is_32bit))
         
         return tasks
     
@@ -97,9 +88,13 @@ class FreeRTOSV11Plugin(OSPlugin):
         
         visited = set()
         
-        list_item_offset = 0
-        if is_32bit:
-            list_item_offset = 0
+        list_item_offset = 4
+        list_struct = elf_parser.get_struct_type('List_t')
+        if list_struct:
+            for member in list_struct.get('members', []):
+                if member.get('name') == 'pxIndex':
+                    list_item_offset = member.get('offset', 4)
+                    break
         
         first_item_addr = dump_reader.read_pointer(list_addr + list_item_offset, is_32bit)
         if not first_item_addr:
@@ -108,13 +103,20 @@ class FreeRTOSV11Plugin(OSPlugin):
         current_ptr = first_item_addr
         visited.add(current_ptr)
         
+        state_list_item_offset = 4
+        for member in tcb_struct.get('members', []):
+            if member.get('name') == 'xStateListItem':
+                state_list_item_offset = member.get('offset', 4)
+                break
+        
         while current_ptr:
-            task_info = self._parse_tcb(current_ptr, tcb_struct, elf_parser, dump_reader, is_32bit)
+            tcb_addr = current_ptr - state_list_item_offset
+            task_info = self._parse_tcb(tcb_addr, tcb_struct, elf_parser, dump_reader, is_32bit)
             if task_info:
                 tasks.append(task_info)
             
             next_ptr = dump_reader.read_pointer(current_ptr + 4, is_32bit)
-            if next_ptr in visited or next_ptr == list_addr:
+            if next_ptr in visited or next_ptr == list_addr + state_list_item_offset:
                 break
             
             visited.add(next_ptr)
@@ -135,14 +137,33 @@ class FreeRTOSV11Plugin(OSPlugin):
             'entry_point': 0,
         }
         
+        priority_value = None
+        stack_start = None
+        
+        for member in tcb_struct.get('members', []):
+            member_name = member.get('name')
+            member_offset = member.get('offset', 0)
+            
+            if member_name == 'uxPriority':
+                priority_value = dump_reader.read_uint32(tcb_addr + member_offset)
+            
+            elif member_name == 'pxStack':
+                stack_start = dump_reader.read_pointer(tcb_addr + member_offset, is_32bit)
+        
+        if priority_value is None or priority_value >= 32:
+            return None
+        
+        if stack_start is None or stack_start < 0x20000000 or stack_start > 0x20010000:
+            return None
+        
         for member in tcb_struct.get('members', []):
             member_name = member.get('name')
             member_offset = member.get('offset', 0)
             
             if member_name == 'pcTaskName':
-                name_addr = dump_reader.read_pointer(tcb_addr + member_offset, is_32bit)
-                if name_addr:
-                    result['name'] = dump_reader.read_string(name_addr, 16) or ''
+                result['name'] = dump_reader.read_string(tcb_addr + member_offset, 16) or ''
+                if '\xff' in result['name']:
+                    return None
             
             elif member_name == 'uxPriority':
                 result['priority'] = dump_reader.read_uint32(tcb_addr + member_offset)

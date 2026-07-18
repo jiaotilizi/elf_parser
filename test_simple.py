@@ -17,7 +17,7 @@ except Exception as e:
 print('Step 3: Loading ELF')
 try:
     elf = ELFParser('tests/qemu_m4_threadx/firmware/output/img/sample_threadx.elf')
-    print(f'Step 4: ELF loaded: {elf.arch}')
+    print(f'Step 4: ELF loaded: {"32-bit" if elf.is_32bit() else "64-bit"}')
     print(f'Step 5: Symbols count: {len(elf._symbol_cache)}')
     print(f'Step 6: Struct types count: {len(elf._struct_type_cache)}')
 except Exception as e:

@@ -20,10 +20,16 @@ TX_THREAD               thread_4;
 TX_THREAD               thread_5;
 TX_THREAD               thread_6;
 TX_THREAD               thread_7;
+TX_THREAD               thread_8;
+TX_THREAD               thread_9;
 TX_QUEUE                queue_0;
+TX_QUEUE                queue_1;
 TX_SEMAPHORE            semaphore_0;
+TX_SEMAPHORE            semaphore_1;
 TX_MUTEX                mutex_0;
+TX_MUTEX                mutex_1;
 TX_EVENT_FLAGS_GROUP    event_flags_0;
+TX_EVENT_FLAGS_GROUP    event_flags_1;
 TX_BYTE_POOL            byte_pool_0;
 TX_BLOCK_POOL           block_pool_0;
 TX_TIMER                timer_0;
@@ -43,8 +49,13 @@ ULONG                   thread_4_counter;
 ULONG                   thread_5_counter;
 ULONG                   thread_6_counter;
 ULONG                   thread_7_counter;
+ULONG                   thread_8_counter;
+ULONG                   thread_9_counter;
 ULONG                   timer_0_expiration_count;
 ULONG                   timer_1_expiration_count;
+
+ULONG                   shared_counter;
+ULONG                   queue_1_data[10];
 
 
 /* Define thread prototypes.  */
@@ -55,6 +66,8 @@ void    thread_2_entry(ULONG thread_input);
 void    thread_3_and_4_entry(ULONG thread_input);
 void    thread_5_entry(ULONG thread_input);
 void    thread_6_and_7_entry(ULONG thread_input);
+void    thread_8_entry(ULONG thread_input);
+void    thread_9_entry(ULONG thread_input);
 
 /* Define timer expiration functions.  */
 
@@ -152,20 +165,51 @@ CHAR    *pointer = TX_NULL;
             pointer, DEMO_STACK_SIZE, 
             8, 8, TX_NO_TIME_SLICE, TX_AUTO_START);
 
+    /* Allocate the stack for thread 8.  */
+    tx_byte_allocate(&byte_pool_0, (VOID **) &pointer, DEMO_STACK_SIZE, TX_NO_WAIT);
+
+    /* Create thread 8.  This thread uses mutex_1 with priority inheritance.  */
+    tx_thread_create(&thread_8, "thread 8", thread_8_entry, 8,  
+            pointer, DEMO_STACK_SIZE, 
+            2, 2, TX_NO_TIME_SLICE, TX_AUTO_START);
+
+    /* Allocate the stack for thread 9.  */
+    tx_byte_allocate(&byte_pool_0, (VOID **) &pointer, DEMO_STACK_SIZE, TX_NO_WAIT);
+
+    /* Create thread 9.  This thread communicates with thread 8 using queue_1.  */
+    tx_thread_create(&thread_9, "thread 9", thread_9_entry, 9,  
+            pointer, DEMO_STACK_SIZE, 
+            3, 3, TX_NO_TIME_SLICE, TX_AUTO_START);
+
     /* Allocate the message queue.  */
     tx_byte_allocate(&byte_pool_0, (VOID **) &pointer, DEMO_QUEUE_SIZE*sizeof(ULONG), TX_NO_WAIT);
 
     /* Create the message queue shared by threads 1 and 2.  */
     tx_queue_create(&queue_0, "queue 0", TX_1_ULONG, pointer, DEMO_QUEUE_SIZE*sizeof(ULONG));
 
+    /* Allocate the second message queue.  */
+    tx_byte_allocate(&byte_pool_0, (VOID **) &pointer, 10*sizeof(ULONG), TX_NO_WAIT);
+
+    /* Create the second message queue shared by threads 8 and 9.  */
+    tx_queue_create(&queue_1, "queue 1", TX_1_ULONG, pointer, 10*sizeof(ULONG));
+
     /* Create the semaphore used by threads 3 and 4.  */
     tx_semaphore_create(&semaphore_0, "semaphore 0", 1);
+
+    /* Create a second semaphore for counting.  */
+    tx_semaphore_create(&semaphore_1, "semaphore 1", 0);
 
     /* Create the event flags group used by threads 1 and 5.  */
     tx_event_flags_create(&event_flags_0, "event flags 0");
 
+    /* Create a second event flags group.  */
+    tx_event_flags_create(&event_flags_1, "event flags 1");
+
     /* Create the mutex used by thread 6 and 7 without priority inheritance.  */
     tx_mutex_create(&mutex_0, "mutex 0", TX_NO_INHERIT);
+
+    /* Create a second mutex with priority inheritance.  */
+    tx_mutex_create(&mutex_1, "mutex 1", TX_INHERIT);
 
     /* Allocate the memory for a small block pool.  */
     tx_byte_allocate(&byte_pool_0, (VOID **) &pointer, DEMO_BLOCK_POOL_SIZE, TX_NO_WAIT);
@@ -214,6 +258,13 @@ UINT    status;
         /* Check status.  */
         if (status != TX_SUCCESS)
             break;
+
+        /* Set event flag 1 to wakeup thread 8.  */
+        status =  tx_event_flags_set(&event_flags_1, 0x2, TX_OR);
+
+        /* Check status.  */
+        if (status != TX_SUCCESS)
+            break;
     }
 }
 
@@ -240,6 +291,11 @@ UINT    status;
 
         /* Increment the message sent.  */
         thread_1_messages_sent++;
+
+        /* Give semaphore to wake up thread 3/4 */
+        status = tx_semaphore_put(&semaphore_0);
+        if (status != TX_SUCCESS)
+            break;
     }
 }
 
@@ -267,6 +323,11 @@ UINT    status;
         
         /* Otherwise, all is okay.  Increment the received message count.  */
         thread_2_messages_received++;
+
+        /* Post to semaphore_1 to count received messages */
+        status = tx_semaphore_put(&semaphore_1);
+        if (status != TX_SUCCESS)
+            break;
     }
 }
 
@@ -329,6 +390,12 @@ ULONG   actual_flags;
         /* Check status.  */
         if ((status != TX_SUCCESS) || (actual_flags != 0x1))
             break;
+
+        /* Also wait for event flag 1 from thread_8 */
+        status = tx_event_flags_get(&event_flags_1, 0x4, TX_OR_CLEAR,
+                                                &actual_flags, TX_WAIT_FOREVER);
+        if (status != TX_SUCCESS)
+            break;
     }
 }
 
@@ -387,14 +454,94 @@ UINT    status;
 }
 
 
+void    thread_8_entry(ULONG thread_input)
+{
+
+UINT    status;
+ULONG   actual_flags;
+ULONG   received_data;
+
+
+    /* This thread uses mutex_1 with priority inheritance and communicates with thread_9 via queue_1.  */
+    while(1)
+    {
+
+        /* Increment the thread counter.  */
+        thread_8_counter++;
+
+        /* Wait for event flag from thread_0 */
+        status = tx_event_flags_get(&event_flags_1, 0x2, TX_OR_CLEAR,
+                                                &actual_flags, TX_WAIT_FOREVER);
+        if (status != TX_SUCCESS)
+            break;
+
+        /* Get the mutex with priority inheritance.  */
+        status = tx_mutex_get(&mutex_1, TX_WAIT_FOREVER);
+        if (status != TX_SUCCESS)
+            break;
+
+        /* Increment shared counter under mutex protection */
+        shared_counter++;
+
+        /* Sleep while holding mutex to demonstrate priority inheritance */
+        tx_thread_sleep(5);
+
+        /* Release the mutex.  */
+        status = tx_mutex_put(&mutex_1);
+        if (status != TX_SUCCESS)
+            break;
+
+        /* Receive data from thread_9 via queue_1 */
+        status = tx_queue_receive(&queue_1, &received_data, TX_WAIT_FOREVER);
+        if (status != TX_SUCCESS)
+            break;
+
+        /* Post event flag to thread_5 */
+        status = tx_event_flags_set(&event_flags_1, 0x4, TX_OR);
+        if (status != TX_SUCCESS)
+            break;
+    }
+}
+
+
+void    thread_9_entry(ULONG thread_input)
+{
+
+UINT    status;
+ULONG   send_data;
+
+
+    /* This thread communicates with thread_8 using queue_1.  */
+    send_data = 0;
+    while(1)
+    {
+
+        /* Increment the thread counter.  */
+        thread_9_counter++;
+
+        /* Send data to thread_8 via queue_1 */
+        status = tx_queue_send(&queue_1, &send_data, TX_WAIT_FOREVER);
+        if (status != TX_SUCCESS)
+            break;
+
+        send_data++;
+
+        /* Sleep before sending next message */
+        tx_thread_sleep(3);
+    }
+}
+
+
 /* Define the timer expiration functions.  */
 
 void    timer_0_expiration_function(ULONG timer_input)
 {
+    (void)timer_input;
     timer_0_expiration_count++;
 }
 
 void    timer_1_expiration_function(ULONG timer_input)
 {
+    (void)timer_input;
     timer_1_expiration_count++;
 }

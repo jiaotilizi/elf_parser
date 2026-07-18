@@ -71,7 +71,12 @@ class ELFParser:
         if not self.dwarfinfo:
             return
         
-        self._dwarf_version = str(self.dwarfinfo.version)
+        if hasattr(self.dwarfinfo, 'version'):
+            self._dwarf_version = str(self.dwarfinfo.version)
+        elif hasattr(self.dwarfinfo, 'header') and hasattr(self.dwarfinfo.header, 'version'):
+            self._dwarf_version = str(self.dwarfinfo.header.version)
+        else:
+            self._dwarf_version = 'unknown'
         
         for cu in self.dwarfinfo.iter_CUs():
             top_die = cu.get_top_DIE()

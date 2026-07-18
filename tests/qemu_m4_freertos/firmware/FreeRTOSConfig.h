@@ -16,7 +16,7 @@
 #define configUSE_TIME_SLICING           1
 #define configUSE_PORT_OPTIMISED_TASK_SELECTION 1
 #define configUSE_TICKLESS_IDLE          0
-#define configMAX_PRIORITIES             ( 5 )
+#define configMAX_PRIORITIES             ( 8 )
 #define configMINIMAL_STACK_SIZE         ( ( uint16_t ) 128 )
 #define configTOTAL_HEAP_SIZE            ( ( size_t ) 32768 )
 #define configMAX_TASK_NAME_LEN          ( 16 )

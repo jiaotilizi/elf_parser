@@ -6,7 +6,8 @@ chip:
   cpu: cortex-m4
   bits: 32
 os:
-  name: freertos_v11p3p0
+  name: freertos
+  version: v11p3p0
   description: FreeRTOS v11p3p0 on QEMU Cortex-M4 with 4 tasks + mutex/sem/queue/eventgroup
 qemu:
   binary: qemu-system-arm
