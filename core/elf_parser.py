@@ -611,6 +611,7 @@ class ELFParser:
         # 结构体：逐成员读取
         if kind in ('struct', 'union'):
             type_offset = type_info.get('type_offset')
+            visit_key = None
             if type_offset is not None:
                 visit_key = (address, type_offset)
                 if visit_key in _visited:
@@ -624,7 +625,7 @@ class ELFParser:
                 result[m_name] = self._read_typed_value(m.get('type'), m_addr, dump_reader, depth + 1, _visited)
             
             if visit_key is not None:
-                _visited.remove(visit_key)
+                _visited.discard(visit_key)
             
             return result
 

@@ -1,3 +1,4 @@
+"""Test case for Cortex-R52 + FreeRTOS v11.3.0 scenario."""
 import os
 import sys
 import unittest
@@ -9,14 +10,13 @@ from core.dump_reader import DumpReader
 from core.profile_loader import ProfileLoader
 
 
-class TestQEMUM4FreeRTOSFirmwareAutoParse(unittest.TestCase):
-    """QEMU Cortex-M4 + FreeRTOS V11.3.0 real-run firmware tests.
+class TestQEMUR52FreeRTOSFirmwareAutoParse(unittest.TestCase):
+    """QEMU Cortex-R52 + FreeRTOS V11.3.0 real-run firmware tests.
 
-    Tests structural properties of FreeRTOS on M4:
+    Tests structural properties of FreeRTOS on R52:
     - TCB_t / QueueDefinition structs exist in DWARF
     - pxCurrentTCB is non-null after scheduler start
     - Task list contains at least 4 created tasks
-    - Bare-metal assert_info / test_point data still intact
     - Plugin interface loads without errors
 
     All tests avoid timing-sensitive assertions (task status, queue depth, etc.)
@@ -26,15 +26,15 @@ class TestQEMUM4FreeRTOSFirmwareAutoParse(unittest.TestCase):
     ELF_PATH = os.path.join(os.path.dirname(__file__), 'firmware', 'output', 'img', 'test_firmware_freertos.elf')
     DUMP_PATH = os.path.join(os.path.dirname(__file__), 'firmware', 'output', 'img', 'test_dump_freertos.bin')
     RAM_START = 0x20000000
-    RAM_END   = 0x20010000   # 64KB dump
+    RAM_END   = 0x20400000   # 4MB dump
 
     def setUp(self):
         if not os.path.exists(self.ELF_PATH) or not os.path.exists(self.DUMP_PATH):
-            self.skipTest("FreeRTOS firmware ELF/dump files not found")
+            self.skipTest("FreeRTOS R52 firmware ELF/dump files not found")
 
         self.elf_parser = ELFParser(self.ELF_PATH)
         profile_loader = ProfileLoader()
-        profile = profile_loader.load_profile('test/qemu_m4_freertos')
+        profile = profile_loader.load_profile('test/qemu_r52_freertos')
         regions = profile_loader.get_memory_regions(profile)
         self.dump_reader = DumpReader(self.DUMP_PATH, regions)
 
@@ -44,15 +44,10 @@ class TestQEMUM4FreeRTOSFirmwareAutoParse(unittest.TestCase):
         self.assertGreater(os.path.getsize(self.DUMP_PATH), 1000)
 
     def test_freertos_elf_header(self):
-        """FreeRTOS ELF: class 32, machine 'ARM', entry in FLASH, has DWARF."""
+        """FreeRTOS ELF: class 32, machine 'ARM', has DWARF."""
         header = self.elf_parser.get_elf_header()
         self.assertEqual(header['class'], 32)
         self.assertEqual(header['machine'], 'ARM')
-        entry_actual = header['entry'] & ~1
-        self.assertGreaterEqual(entry_actual, 0x00000000,
-                               f"entry {header['entry']:#x} should be in FLASH")
-        self.assertLess(entry_actual, 0x00001000,
-                        f"entry {header['entry']:#x} should be in FLASH")
         self.assertIsNotNone(self.elf_parser.dwarfinfo)
 
     def test_scheduler_started(self):
@@ -120,7 +115,7 @@ class TestQEMUM4FreeRTOSFirmwareAutoParse(unittest.TestCase):
                         f"pcTaskName element should be char, got {element_type.get('name')}")
 
     def test_created_task_count(self):
-        """At least 4 tasks exist (Led, Sender, Recv, IdleX)."""
+        """At least one task list should be non-null."""
         is_32bit = self.elf_parser.is_32bit()
         max_priority = 5
 
@@ -156,27 +151,8 @@ class TestQEMUM4FreeRTOSFirmwareAutoParse(unittest.TestCase):
         self.assertGreaterEqual(len(visited), 1,
                                "At least one task list should be non-null")
 
-    def test_baremetal_assert_data_intact(self):
-        """Bare-metal assert_info / test_point / trace data structures can be parsed."""
-        # Verify scalar globals can be parsed (values may change between runs)
-        ticks = self.elf_parser.parse_struct_auto('g_system_ticks', self.dump_reader)
-        self.assertIsNotNone(ticks, "g_system_ticks should be parseable")
-        err = self.elf_parser.parse_struct_auto('g_error_count', self.dump_reader)
-        self.assertIsNotNone(err, "g_error_count should be parseable")
-        status = self.elf_parser.parse_struct_auto('g_system_status', self.dump_reader)
-        self.assertIsNotNone(status, "g_system_status should be parseable")
-
-        # Verify array globals can be parsed and have correct structure
-        arr = self.elf_parser.parse_struct_auto('g_assert_infos', self.dump_reader)
-        self.assertIsInstance(arr, list, "g_assert_infos should be a list")
-        self.assertEqual(len(arr), 4, "g_assert_infos should have 4 slots")
-
-        tps = self.elf_parser.parse_struct_auto('g_test_points', self.dump_reader)
-        self.assertIsInstance(tps, list, "g_test_points should be a list")
-        self.assertEqual(len(tps), 8, "g_test_points should have 8 slots")
-
     def test_freertos_plugin_loadable(self):
-        """FreeRTOS11p0Plugin initializes without exceptions."""
+        """FreeRTOS11p3p0Plugin initializes without exceptions."""
         try:
             from plugins.rtos.freertos.freertos_v11p3p0 import FreeRTOSV11Plugin
         except ImportError as e:

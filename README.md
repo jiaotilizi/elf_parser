@@ -74,7 +74,15 @@ ELF Parser is a Python-based tool for analyzing embedded firmware by parsing ELF
 | `plugins/` | RTOS and module plugins (ThreadX, FreeRTOS, test_point, assert_info) |
 | `display/` | Display schemes (CLI basic, CLI interactive, Web GUI) |
 | `profiles/` | Target configuration files (chip, OS, memory regions, QEMU settings) |
-| `tests/` | Test scenarios (QEMU firmware simulation, unit tests) |
+| `tests/qemu_m4_threadx/` | Cortex-M4 ThreadX QEMU test scenario |
+| `tests/qemu_m4_freertos/` | Cortex-M4 FreeRTOS QEMU test scenario |
+| `tests/qemu_r52_threadx/` | Cortex-R52 ThreadX QEMU test scenario (ARMv8-R) |
+| `tests/qemu_r52_freertos/` | Cortex-R52 FreeRTOS QEMU test scenario (ARMv8-R) |
+| `tests/qemu_r52_bare/` | Cortex-R52 bare-metal QEMU test scenario |
+| `tests/qemu_riscv_bare/` | RISC-V bare-metal QEMU test scenario |
+| `tests/qemu_aarch64_bare/` | AArch64 bare-metal QEMU test scenario |
+| `tests/unit/` | Unit tests for core modules |
+| `tests/_common/` | Shared test utilities (QEMU runner, show_parsed_base) |
 | `rtos/` | RTOS source code submodules (ThreadX, FreeRTOS) - **DO NOT MODIFY** |
 
 ## Installation
@@ -167,14 +175,33 @@ The `memory` section supports multiple regions with:
 ### Run QEMU Test Scenarios
 
 ```bash
-# ThreadX test
+# ThreadX test (Cortex-M4)
 cd tests/qemu_m4_threadx/firmware
 bash build.sh
 python3 run_qemu.py
 
-# Run parser test
-cd tests/qemu_m4_threadx
-python3 test_qemu_m4_threadx.py
+# FreeRTOS test (Cortex-M4)
+cd tests/qemu_m4_freertos/firmware
+bash build.sh
+python3 run_qemu.py
+
+# ThreadX test (Cortex-R52)
+cd tests/qemu_r52_threadx/firmware
+bash build.sh
+python3 run_qemu.py
+
+# FreeRTOS test (Cortex-R52)
+cd tests/qemu_r52_freertos/firmware
+bash build.sh
+python3 run_qemu.py
+
+# Run parser tests
+cd tests/qemu_r52_threadx
+python3 test_qemu_r52_threadx.py
+
+# Run all tests
+cd /path/to/elf_parser
+python3 -m unittest discover -s tests -p "test_*.py"
 ```
 
 ### Manual Testing
@@ -265,9 +292,10 @@ Plugins should return data in this format:
 
 ## Known Limitations
 
-- Currently supports ARM Cortex-M (32-bit) targets
+- Supports ARM Cortex-M (32-bit) and Cortex-R (32-bit, including R52) targets
 - Supports ThreadX and FreeRTOS plugins
 - DWARF parsing optimized for GCC-compiled firmware
+- Cortex-R52 requires Hyp-to-SVC mode transition in startup code (QEMU boots in Hyp mode)
 
 ## License
 
@@ -277,7 +305,50 @@ See LICENSE file for details.
 
 ## Changelog
 
-### v0.1.1 (Current) - 2026-07-19
+### v0.2.0 - 2026-07-19
+
+**Cortex-R52 跨架构泛用性验证**
+
+1. **Cortex-R52 ThreadX 测试场景**
+   - 创建 `tests/qemu_r52_threadx/` 测试目录，使用 ThreadX Cortex-R5 端口
+   - 解决 QEMU Cortex-R52 在 Hyp 模式启动导致 `MSR CPSR` 崩溃的问题
+   - 在 `startup.S` 中添加 Hyp 模式检测和 `ERET` 切换到 SVC 模式的代码
+   - 修正 `tx_initialize_low_level.S` 中 `_sp` 符号引用和堆栈检查
+   - 调整链接脚本：RAM 起始地址 0x20000000，4MB 空间，32KB 栈
+   - 创建测试用例 `test_qemu_r52_threadx.py`，10 个测试全部通过
+
+2. **Cortex-R52 FreeRTOS 测试场景**
+   - 完善 `tests/qemu_r52_freertos/` 测试目录
+   - 使用 FreeRTOS Cortex-R5 端口（`ARM_CR5`）
+   - 修正 `pxCurrentTCB` 解析：使用 `read_uint32` 直接读取指针，而非 `parse_struct_auto`
+   - 修正 `TCB_t` / `QueueDefinition` 结构体 kind 检查：同时接受 `struct` 和 `typedef`
+   - 创建测试用例 `test_qemu_r52_freertos.py`，9 个测试全部通过
+
+3. **测试用例修复与完善**
+   - 修复 `qemu_m4_threadx` 测试用例：使用 `ProfileLoader` + `memory_regions` 替代过时的 `base_address` 参数
+   - 更新所有 ThreadX 测试用例：使用 `get_struct_type` 替代不存在的 `has_type`
+   - 所有 113 个测试用例通过（61 个因缺少固件跳过，0 个失败）
+
+4. **关键发现：QEMU Cortex-R52 Hyp 模式**
+   - QEMU 在 `mps3-an536` 机器上启动 Cortex-R52 时，CPU 默认处于 Hyp 模式（CPSR = 0x600001DA，模式位 = 0x1A）
+   - 在 Hyp 模式下执行 `MSR CPSR` 或 `CPS` 指令会触发异常，导致 CPU 进入未定义状态
+   - 解决方法：在启动代码中检测 CPSR 模式位，若为 Hyp 模式则使用 `ERET` 指令切换到 SVC 模式
+   - 此发现对其他 ARMv8-R 架构的移植工作有重要参考价值
+
+**文件修改**
+
+- [tests/qemu_r52_threadx/firmware/startup.S](file:///Users/yangtao/Documents/elf_parser/tests/qemu_r52_threadx/firmware/startup.S) - 添加 Hyp 模式切换
+- [tests/qemu_r52_threadx/firmware/linker.ld](file:///Users/yangtao/Documents/elf_parser/tests/qemu_r52_threadx/firmware/linker.ld) - 内存布局调整
+- [tests/qemu_r52_threadx/firmware/sample_threadx.c](file:///Users/yangtao/Documents/elf_parser/tests/qemu_r52_threadx/firmware/sample_threadx.c) - 调试变量
+- [tests/qemu_r52_threadx/firmware/show_parsed.py](file:///Users/yangtao/Documents/elf_parser/tests/qemu_r52_threadx/firmware/show_parsed.py) - 显示脚本
+- [tests/qemu_r52_threadx/test_qemu_r52_threadx.py](file:///Users/yangtao/Documents/elf_parser/tests/qemu_r52_threadx/test_qemu_r52_threadx.py) - 测试用例
+- [tests/qemu_r52_freertos/test_qemu_r52_freertos.py](file:///Users/yangtao/Documents/elf_parser/tests/qemu_r52_freertos/test_qemu_r52_freertos.py) - 测试用例
+- [tests/qemu_m4_threadx/test_qemu_m4_threadx.py](file:///Users/yangtao/Documents/elf_parser/tests/qemu_m4_threadx/test_qemu_m4_threadx.py) - API 兼容性修复
+- [README.md](file:///Users/yangtao/Documents/elf_parser/README.md) - 文档更新
+
+---
+
+### v0.1.1 - 2026-07-19
 
 **FreeRTOS插件修复**
 

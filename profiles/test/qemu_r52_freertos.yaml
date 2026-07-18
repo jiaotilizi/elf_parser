@@ -1,0 +1,35 @@
+chip:
+  name: qemu_r52_freertos
+  vendor: qemu
+  description: QEMU mps3-an536 (Cortex-R52) + FreeRTOS v11.3.0
+  arch: armv8-r
+  cpu: cortex-r52
+  bits: 32
+os:
+  name: freertos
+  version: v11p3p0
+  description: FreeRTOS v11p3p0 on QEMU Cortex-R52 with 10 tasks + mutex/sem/queue/eventgroup
+qemu:
+  binary: qemu-system-arm
+  machine: mps3-an536
+  cpu: cortex-r52
+  kernel_arg: -kernel
+  ram_base: 0x20000000
+  ram_size: 4194304
+  run_seconds: 3.0
+memory:
+- name: ram
+  start_addr: 0x20000000
+  size: 4194304
+  offset_in_dump: 0
+modules:
+- assert_info
+- test_point
+plugins:
+- rtos/freertos
+display:
+  scheme: cli_basic
+  options:
+    show_hex: true
+    show_address: true
+    max_rows: 50

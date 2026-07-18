@@ -9,7 +9,7 @@ from core.dump_reader import DumpReader
 from core.profile_loader import ProfileLoader
 
 
-class TestQEMUM4ThreadXFirmwareAutoParse(unittest.TestCase):
+class TestQEMUR52ThreadXFirmwareAutoParse(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.firmware_dir = os.path.join(os.path.dirname(__file__), 'firmware')
@@ -20,21 +20,26 @@ class TestQEMUM4ThreadXFirmwareAutoParse(unittest.TestCase):
         assert os.path.exists(cls.dump_path), f"Dump not found: {cls.dump_path}"
 
         loader = ProfileLoader()
-        profile = loader.load_profile('test/qemu_m4_threadx')
+        profile = loader.load_profile('profiles/test/qemu_r52_threadx.yaml')
         regions = loader.get_memory_regions(profile)
 
         cls.elf_parser = ELFParser(cls.elf_path)
         cls.dump_reader = DumpReader(cls.dump_path, regions)
 
     def test_threadx_thread_control_block_in_dwarf(self):
-        self.assertIsNotNone(self.elf_parser.get_struct_type('TX_THREAD'),
-                             "TX_THREAD type should exist in DWARF")
+        self.assertIsNotNone(self.elf_parser.get_struct_type('TX_THREAD'), "TX_THREAD type should exist in DWARF")
 
     def test_threadx_current_thread_non_null(self):
         sym = self.elf_parser.get_symbol_by_name('_tx_thread_current_ptr')
         self.assertIsNotNone(sym, "_tx_thread_current_ptr symbol should exist")
         ptr_value = self.dump_reader.read_uint32(sym['address'])
         self.assertNotEqual(ptr_value, 0, "Current thread pointer should not be NULL")
+
+    def test_threadx_system_state_finished(self):
+        sym = self.elf_parser.get_symbol_by_name('_tx_thread_system_state')
+        self.assertIsNotNone(sym, "_tx_thread_system_state symbol should exist")
+        state = self.dump_reader.read_uint32(sym['address'])
+        self.assertEqual(state, 0, "ThreadX system state should be 0 (TX_INITIALIZE_IS_FINISHED)")
 
     def test_threadx_created_thread_count(self):
         thread_count = 0
@@ -43,29 +48,27 @@ class TestQEMUM4ThreadXFirmwareAutoParse(unittest.TestCase):
             name = sym['name']
             if name.startswith('thread_') and not name.endswith('_counter') and not name.endswith('_entry'):
                 addr = sym['address']
-                if addr is not None and 0x20000000 <= addr < 0x20800000:
+                if addr is not None and 0x20000000 <= addr < 0x20400000:
                     thread_count += 1
         self.assertGreaterEqual(thread_count, 8, "At least 8 threads should exist")
 
     def test_threadx_semaphore_in_dwarf(self):
-        self.assertIsNotNone(self.elf_parser.get_struct_type('TX_SEMAPHORE'),
-                             "TX_SEMAPHORE type should exist")
+        self.assertIsNotNone(self.elf_parser.get_struct_type('TX_SEMAPHORE'), "TX_SEMAPHORE type should exist")
 
     def test_threadx_mutex_in_dwarf(self):
-        self.assertIsNotNone(self.elf_parser.get_struct_type('TX_MUTEX'),
-                             "TX_MUTEX type should exist")
+        self.assertIsNotNone(self.elf_parser.get_struct_type('TX_MUTEX'), "TX_MUTEX type should exist")
 
     def test_threadx_queue_in_dwarf(self):
-        self.assertIsNotNone(self.elf_parser.get_struct_type('TX_QUEUE'),
-                             "TX_QUEUE type should exist")
+        self.assertIsNotNone(self.elf_parser.get_struct_type('TX_QUEUE'), "TX_QUEUE type should exist")
 
     def test_threadx_event_flags_in_dwarf(self):
-        self.assertIsNotNone(self.elf_parser.get_struct_type('TX_EVENT_FLAGS_GROUP'),
-                             "TX_EVENT_FLAGS_GROUP type should exist")
+        self.assertIsNotNone(self.elf_parser.get_struct_type('TX_EVENT_FLAGS_GROUP'), "TX_EVENT_FLAGS_GROUP type should exist")
+
+    def test_threadx_timer_in_dwarf(self):
+        self.assertIsNotNone(self.elf_parser.get_struct_type('TX_TIMER'), "TX_TIMER type should exist")
 
     def test_threadx_byte_pool_in_dwarf(self):
-        self.assertIsNotNone(self.elf_parser.get_struct_type('TX_BYTE_POOL'),
-                             "TX_BYTE_POOL type should exist")
+        self.assertIsNotNone(self.elf_parser.get_struct_type('TX_BYTE_POOL'), "TX_BYTE_POOL type should exist")
 
 
 if __name__ == '__main__':
