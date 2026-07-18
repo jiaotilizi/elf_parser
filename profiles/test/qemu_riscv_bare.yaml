@@ -1,0 +1,28 @@
+chip:
+  name: qemu_riscv_bare
+  vendor: qemu
+  description: QEMU sifive_e RV32 bare-metal (RISC-V)
+  arch: rv32imac
+  cpu: sifive-e31
+  bits: 32
+os:
+  name: baremetal
+  description: Bare-metal firmware on QEMU (RISC-V RV32)
+qemu:
+  binary: qemu-system-riscv32
+  machine: sifive_e
+  cpu: sifive-e31
+  kernel_arg: -kernel
+  ram_base: 0x80000000
+  ram_size: 4096
+  run_seconds: 2.0
+memory:
+- name: flash
+  start_addr: 541065216   # 0x20400000 (sifive_e firmware load address per mask ROM)
+  size: 65536             # 64KB (firmware is ~3KB, dump just enough)
+- name: ram
+  start_addr: 2147483648 # 0x80000000 (sifive_e SRAM)
+  size: 4096
+modules:
+- assert_info
+- test_point

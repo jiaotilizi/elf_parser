@@ -1,0 +1,21 @@
+chip:
+  name: demo_chip
+  vendor: nxp
+  description: NXP demo chip for testing
+os:
+  name: threadx
+  version: 5p6
+  description: ThreadX 5.6 RTOS
+memory:
+- name: ram
+  start_addr: 2281701376
+  size: 33554432
+- name: llram
+  start_addr: 2315255808
+  size: 65536
+- name: iram
+  start_addr: 2315321344
+  size: 131072
+modules:
+- assert_info
+- test_point

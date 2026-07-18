@@ -1,0 +1,6 @@
+[submodule "rtos/freertos_v11p3p0"]
+	path = rtos/freertos_v11p3p0
+	url = https://github.com/FreeRTOS/FreeRTOS-Kernel.git
+[submodule "rtos/threadx_v6p5p1"]
+	path = rtos/threadx_v6p5p1
+	url = https://github.com/azure-rtos/threadx.git

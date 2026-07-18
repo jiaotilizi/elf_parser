@@ -1,0 +1,17 @@
+chip:
+  name: bss_simulated
+  vendor: test
+  description: BSS-segment firmware with Python-simulated dump
+  arch: armv7e-m
+  cpu: cortex-m4
+  bits: 32
+os:
+  name: baremetal
+  description: Bare-metal firmware
+memory:
+- name: ram
+  start_addr: 536870912
+  size: 4096
+modules:
+- assert_info
+- test_point
