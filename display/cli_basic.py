@@ -1,4 +1,4 @@
-from .base import DisplayBase
+from .base import DisplayBase, ResourceMetadata
 from typing import Dict, List, Any
 import json
 
@@ -8,20 +8,51 @@ class CliBasicDisplay(DisplayBase):
         super().__init__(profile, data_adapter)
         self.show_hex = self.options.get('show_hex', True)
     
-    def _print_section(self, title: str, data: List[Dict]):
+    def _format_value(self, value, field_type: str = None):
+        if field_type == 'hex':
+            if isinstance(value, int):
+                return f"0x{value:08X}"
+        elif field_type == 'number':
+            return str(value)
+        elif field_type == 'string':
+            return str(value)
+        
+        if isinstance(value, int):
+            if value < 0:
+                return str(value)
+            return f"0x{value:08X}"
+        return str(value)
+    
+    def _print_section(self, title: str, icon: str, data: List[Dict], metadata: ResourceMetadata):
         if not data:
-            print(f"\n[{title}] Empty")
+            print(f"\n{icon} [{title}] Empty")
             return
         
-        print(f"\n[{title}]")
+        print(f"\n{icon} [{title}]")
         print("-" * 80)
         
-        if self.show_hex:
+        if metadata.fields:
+            headers = [f['label'] for f in metadata.fields]
+            header_line = " | ".join(f"{h:<16}" for h in headers)
+            print(header_line)
+            print("-" * 80)
+            
             for item in data:
-                print(json.dumps(item, indent=2, default=self._json_default))
+                values = []
+                for field in metadata.fields:
+                    field_name = field['name']
+                    field_type = field.get('type', 'string')
+                    value = item.get(field_name, '')
+                    formatted = self._format_value(value, field_type)
+                    values.append(f"{formatted:<16}")
+                print(" | ".join(values))
         else:
-            for item in data:
-                print(item)
+            if self.show_hex:
+                for item in data:
+                    print(json.dumps(item, indent=2, default=self._json_default))
+            else:
+                for item in data:
+                    print(item)
     
     def _json_default(self, obj):
         if isinstance(obj, int):
@@ -30,32 +61,8 @@ class CliBasicDisplay(DisplayBase):
             return f"0x{obj:08X}"
         return str(obj)
     
-    def show_rtos_tasks(self, tasks: List[Dict]):
-        self._print_section("RTOS Tasks", tasks)
-    
-    def show_rtos_mutexes(self, mutexes: List[Dict]):
-        self._print_section("RTOS Mutexes", mutexes)
-    
-    def show_rtos_semaphores(self, semaphores: List[Dict]):
-        self._print_section("RTOS Semaphores", semaphores)
-    
-    def show_rtos_queues(self, queues: List[Dict]):
-        self._print_section("RTOS Queues", queues)
-    
-    def show_rtos_events(self, events: List[Dict]):
-        self._print_section("RTOS Events", events)
-    
-    def show_rtos_timers(self, timers: List[Dict]):
-        self._print_section("RTOS Timers", timers)
-    
-    def show_rtos_block_pools(self, pools: List[Dict]):
-        self._print_section("RTOS Block Pools", pools)
-    
-    def show_rtos_byte_pools(self, pools: List[Dict]):
-        self._print_section("RTOS Byte Pools", pools)
-    
-    def show_test_points(self, test_points: List[Dict]):
-        self._print_section("Test Points", test_points)
+    def show_resource(self, resource_type: str, data: List[Dict], metadata: ResourceMetadata):
+        self._print_section(metadata.label, metadata.icon, data, metadata)
     
     def show_detail(self, resource_type: str, address: int):
         if self.data_adapter:
@@ -72,28 +79,12 @@ class CliBasicDisplay(DisplayBase):
             return
         
         try:
-            rtos_data = self.data_adapter.get_rtos_data()
+            resource_types = self.data_adapter.get_all_resource_types()
             
-            if rtos_data.get('tasks'):
-                self.show_rtos_tasks(rtos_data['tasks'])
-            if rtos_data.get('mutexes'):
-                self.show_rtos_mutexes(rtos_data['mutexes'])
-            if rtos_data.get('semaphores'):
-                self.show_rtos_semaphores(rtos_data['semaphores'])
-            if rtos_data.get('queues'):
-                self.show_rtos_queues(rtos_data['queues'])
-            if rtos_data.get('events'):
-                self.show_rtos_events(rtos_data['events'])
-            if rtos_data.get('timers'):
-                self.show_rtos_timers(rtos_data['timers'])
-            if rtos_data.get('block_pools'):
-                self.show_rtos_block_pools(rtos_data['block_pools'])
-            if rtos_data.get('byte_pools'):
-                self.show_rtos_byte_pools(rtos_data['byte_pools'])
-            
-            test_points = self.data_adapter.get_test_points()
-            if test_points:
-                self.show_test_points(test_points)
+            for resource_type in resource_types:
+                data = self.data_adapter.get_resource_data(resource_type)
+                metadata = self.data_adapter.get_resource_metadata(resource_type)
+                self.show_resource(resource_type, data, metadata)
                 
         except Exception as e:
             print(f"Error during display: {e}")

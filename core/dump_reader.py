@@ -44,13 +44,21 @@ class DumpReader:
             name = region_config.get('name', 'unknown')
             start_addr = region_config.get('start_addr', 0)
             size = region_config.get('size', 0)
+            offset_in_dump = region_config.get('offset_in_dump')
             
             if size == 0:
                 size = len(self.dump_data) - dump_offset
             
-            region = MemoryRegion(name, start_addr, size, dump_offset)
+            if offset_in_dump is not None:
+                region_dump_offset = offset_in_dump
+            else:
+                region_dump_offset = dump_offset
+            
+            region = MemoryRegion(name, start_addr, size, region_dump_offset)
             self.memory_regions.append(region)
-            dump_offset += size
+            
+            if offset_in_dump is None:
+                dump_offset += size
     
     def read_memory(self, address: int, size: int) -> Optional[bytes]:
         for region in self.memory_regions:

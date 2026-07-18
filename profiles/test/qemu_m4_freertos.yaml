@@ -25,3 +25,9 @@ modules:
 - test_point
 plugins:
 - rtos/freertos
+display:
+  scheme: cli_interactive
+  options:
+    show_hex: true
+    show_address: true
+    max_rows: 50

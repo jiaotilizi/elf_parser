@@ -26,3 +26,7 @@ memory:
 modules:
 - assert_info
 - test_point
+display:
+  scheme: cli_basic
+  options:
+    show_hex: true

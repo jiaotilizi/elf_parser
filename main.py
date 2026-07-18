@@ -9,6 +9,8 @@ from core.elf_parser import ELFParser
 from core.dump_reader import DumpReader
 from core.plugin_manager import PluginManager, PluginContext
 from core.profile_loader import ProfileLoader
+from display import DisplayFactory
+from display.data_adapter import DataAdapter
 
 
 def main():
@@ -22,6 +24,7 @@ def main():
     parser.add_argument('--dump-struct', help='Dump specific struct by name')
     parser.add_argument('--dump-symbol', help='Dump specific symbol by name')
     parser.add_argument('--search-symbol', help='Search symbols by pattern')
+    parser.add_argument('--display', help='Display scheme: cli_basic, cli_interactive, web_gui')
     
     args = parser.parse_args()
     
@@ -50,6 +53,8 @@ def main():
             dump_symbol(results['elf_parser'], results['dump_reader'], args.dump_symbol)
         elif args.search_symbol:
             search_symbols(results['elf_parser'], args.search_symbol)
+        elif args.display:
+            show_display(args.display, results)
         else:
             output_results(results, args.output)
             
@@ -98,7 +103,20 @@ def analyze(elf_path: str, dump_path: str, profile_name: str) -> dict:
         'profile': profile,
         'plugins': [p.name for p in initialized_plugins],
         'results': plugin_results,
+        'plugin_manager': plugin_manager,
+        'context': context.__dict__,
     }
+
+
+def show_display(scheme: str, results: dict):
+    profile = results['profile']
+    plugin_manager = results['plugin_manager']
+    context = results['context']
+    
+    data_adapter = DataAdapter(plugin_manager, context)
+    
+    display = DisplayFactory.create(scheme, profile, data_adapter)
+    display.run()
 
 
 def list_profiles():
@@ -175,20 +193,26 @@ def search_symbols(elf_parser, pattern: str):
 
 
 def output_results(results: dict, output_file: str = None):
+    profile = results['profile']
+    display_config = profile.get('display', {}).get('scheme', 'cli_basic')
+    
+    if not output_file:
+        data_adapter = DataAdapter(results['plugin_manager'], results['context'])
+        display = DisplayFactory.create(display_config, profile, data_adapter)
+        display.run()
+        return
+    
     output = {
-        'profile': results['profile'].get('chip', {}).get('name', 'unknown'),
-        'os': results['profile'].get('os', {}).get('name', 'unknown'),
-        'os_version': results['profile'].get('os', {}).get('version', 'unknown'),
+        'profile': profile.get('chip', {}).get('name', 'unknown'),
+        'os': profile.get('os', {}).get('name', 'unknown'),
+        'os_version': profile.get('os', {}).get('version', 'unknown'),
         'plugins': results['plugins'],
         'analysis': results['results'],
     }
     
-    if output_file:
-        with open(output_file, 'w') as f:
-            json.dump(output, f, indent=2, default=str)
-        print(f"Results saved to: {output_file}")
-    else:
-        print(json.dumps(output, indent=2, default=str))
+    with open(output_file, 'w') as f:
+        json.dump(output, f, indent=2, default=str)
+    print(f"Results saved to: {output_file}")
 
 
 if __name__ == '__main__':

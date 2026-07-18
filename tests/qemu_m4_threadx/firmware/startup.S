@@ -3,73 +3,61 @@
 .fpu fpv4-sp-d16
 .thumb
 
-.global _start
+.global _vectors
+.global Reset_Handler
 .extern main
-.extern __data_load_start__
-.extern __data_start__
-.extern __data_end__
-.extern __bss_start__
-.extern __bss_end__
-.extern __stack_end__
 
-.section .vectors
-__vectors_start:
-    .word __stack_end__
-    .word reset_handler
-    .word 0
-    .word 0
-    .word 0
-    .word 0
-    .word 0
-    .word 0
-    .word 0
-    .word 0
-    .word 0
-    .word 0
-    .word 0
-    .word 0
-    .word 0
-    .word 0
+.section .isr_vector, "a", %progbits
+.align 2
+_vectors:
+g_pfnVectors:
+    .word _estack
+    .word Reset_Handler
+    .word __tx_NMIHandler
+    .word __tx_HardfaultHandler
+    .word __tx_BadHandler
+    .word __tx_BadHandler
+    .word __tx_BadHandler
+    .word __tx_BadHandler
+    .word __tx_BadHandler
+    .word __tx_BadHandler
+    .word __tx_BadHandler
+    .word __tx_SVCallHandler
+    .word __tx_DBGHandler
+    .word __tx_BadHandler
+    .word __tx_PendSVHandler
+    .word __tx_SysTickHandler
 
-.section .text
+.section .text.Reset_Handler, "ax", %progbits
+.align 2
 .thumb_func
-reset_handler:
-    ldr r0, =__stack_end__
-    mov sp, r0
+Reset_Handler:
+    ldr     r0, =_sidata
+    ldr     r1, =_sdata
+    ldr     r2, =_edata
+.Lcopy_data:
+    cmp     r1, r2
+    bcc     .Lcopy_data_loop
+    b       .Lzero_bss
+.Lcopy_data_loop:
+    ldmia   r0!, {r3}
+    stmia   r1!, {r3}
+    b       .Lcopy_data
 
-    ldr r0, =__data_load_start__
-    ldr r1, =__data_start__
-    ldr r2, =__data_end__
-    bl memcopy
+.Lzero_bss:
+    ldr     r0, =_sbss
+    ldr     r1, =_ebss
+    movs    r2, #0
+.Lzero_bss_loop:
+    cmp     r0, r1
+    bcc     .Lzero_bss_fill
+    b       .Lcall_main
+.Lzero_bss_fill:
+    str     r2, [r0], #4
+    b       .Lzero_bss_loop
 
-    ldr r0, =__bss_start__
-    ldr r1, =__bss_end__
-    mov r2, #0
-    bl memset
+.Lcall_main:
+    bl      main
 
-    mov r0, #0
-    bl main
-
-loop_forever:
-    b loop_forever
-
-.thumb_func
-memcopy:
-    cmp r0, r1
-    beq memcopy_done
-memcopy_loop:
-    ldrb r3, [r0], #1
-    strb r3, [r1], #1
-    cmp r1, r2
-    bne memcopy_loop
-memcopy_done:
-    bx lr
-
-.thumb_func
-memset:
-    cmp r0, r1
-    beq memset_done
-    strb r2, [r0], #1
-    b memset
-memset_done:
-    bx lr
+.Lhang:
+    b       .Lhang

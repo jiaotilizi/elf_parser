@@ -96,6 +96,13 @@ class ProfileLoader:
     def get_modules(self, profile: Dict[str, Any]) -> List[str]:
         return profile.get('modules', [])
     
+    def get_display_config(self, profile: Dict[str, Any]) -> Dict[str, Any]:
+        display_config = profile.get('display', {})
+        return {
+            'scheme': display_config.get('scheme', 'cli_basic'),
+            'options': display_config.get('options', {})
+        }
+    
     def validate_profile(self, profile: Dict[str, Any]) -> List[str]:
         errors = []
         

@@ -1,48 +1,64 @@
+ENTRY(Reset_Handler)
+
 MEMORY
 {
-  FLASH (rx) : ORIGIN = 0x00000000, LENGTH = 0x00400000
-  RAM (wx) : ORIGIN = 0x20000000, LENGTH = 0x00080000
+  FLASH (rx)  : ORIGIN = 0x00000000, LENGTH = 4M
+  RAM   (rwx) : ORIGIN = 0x20000000, LENGTH = 4M
 }
+
+_estack = ORIGIN(RAM) + LENGTH(RAM);
 
 SECTIONS
 {
-  .vectors :
+  .isr_vector :
   {
     _vectors = .;
+    . = ALIGN(4);
+    KEEP(*(.isr_vector))
     KEEP(*(.vectors))
+    . = ALIGN(4);
   } > FLASH
 
   .text :
   {
-    *(.text*)
-    *(.rodata*)
-    KEEP(*(.init))
-    KEEP(*(.fini))
+    . = ALIGN(4);
+    *(.text)
+    *(.text.*)
+    *(.rodata)
+    *(.rodata.*)
+    . = ALIGN(4);
+    _etext = .;
   } > FLASH
 
-  __data_load_start__ = .;
-  .data : AT(__data_load_start__)
+  _sidata = LOADADDR(.data);
+  .data :
   {
-    __data_start__ = .;
-    *(.data*)
-    __data_end__ = .;
-  } > RAM
+    . = ALIGN(4);
+    _sdata = .;
+    *(.data)
+    *(.data.*)
+    . = ALIGN(4);
+    _edata = .;
+  } > RAM AT> FLASH
 
   .bss :
   {
-    __bss_start__ = .;
-    *(.bss*)
-    *(COMMON)
-    __bss_end__ = .;
-  } > RAM
-
-  .stack (NOLOAD) :
-  {
     . = ALIGN(4);
-    __stack_start__ = .;
-    . += 0x1000;
-    __stack_end__ = .;
+    _sbss = .;
+    *(.bss)
+    *(.bss.*)
+    *(COMMON)
+    . = ALIGN(4);
+    _ebss = .;
   } > RAM
 
   __RAM_segment_used_end__ = .;
+
+  /DISCARD/ :
+  {
+    *(.ARM.exidx*)
+    *(.ARM.extab*)
+    *(.comment)
+    *(.note.*)
+  }
 }

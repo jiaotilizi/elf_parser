@@ -23,6 +23,11 @@ class ELFParser:
         
         self._elf_segments: List[Dict[str, Any]] = []
         
+        self._dwarf_version: str = 'unknown'
+        self._compiler_name: str = 'unknown'
+        self._compiler_version: str = 'unknown'
+        self._producer_string: str = ''
+        
         self._parse_elf()
     
     def _parse_elf(self):
@@ -46,6 +51,7 @@ class ELFParser:
             
             if self.elffile.has_dwarf_info():
                 self.dwarfinfo = self.elffile.get_dwarf_info()
+                self._parse_build_info()
                 self._build_cu_index()
                 self._build_type_cache()
     
@@ -60,6 +66,51 @@ class ELFParser:
 
                     if name:
                         self._symbol_cache[name] = (addr, size, stype)
+    
+    def _parse_build_info(self):
+        if not self.dwarfinfo:
+            return
+        
+        self._dwarf_version = str(self.dwarfinfo.version)
+        
+        for cu in self.dwarfinfo.iter_CUs():
+            top_die = cu.get_top_DIE()
+            if 'DW_AT_producer' in top_die.attributes:
+                producer = top_die.attributes['DW_AT_producer'].value
+                if isinstance(producer, bytes):
+                    producer = producer.decode('utf-8', errors='replace')
+                self._producer_string = producer
+                
+                import re
+                
+                armcc_match = re.search(r'ARM Compiler|armclang|ARM C/C\+\+ Compiler', producer, re.IGNORECASE)
+                gcc_match = re.search(r'GCC|gnu|gcc', producer, re.IGNORECASE)
+                iar_match = re.search(r'IAR|IAR Systems', producer, re.IGNORECASE)
+                
+                if armcc_match:
+                    self._compiler_name = 'ARMCC'
+                elif gcc_match:
+                    self._compiler_name = 'GCC'
+                elif iar_match:
+                    self._compiler_name = 'IAR'
+                
+                version_match = re.search(r'(\d+\.\d+(\.\d+)*)', producer)
+                if version_match:
+                    self._compiler_version = version_match.group(1)
+                break
+    
+    def print_build_info(self):
+        print("=" * 40)
+        print("ELF Build Information")
+        print("=" * 40)
+        print(f"ELF Path: {self.elf_path}")
+        print(f"Architecture: {'32-bit' if self._is_32bit else '64-bit'}")
+        print(f"DWARF Version: DWARF{self._dwarf_version}")
+        print(f"Compiler: {self._compiler_name}")
+        print(f"Compiler Version: {self._compiler_version}")
+        if self._producer_string:
+            print(f"Producer: {self._producer_string}")
+        print("=" * 40)
     
     def _get_symbol_type(self, sym) -> str:
         st_info = sym['st_info']
@@ -85,6 +136,8 @@ class ELFParser:
         return f"{bind_map.get(st_bind, 'unknown')}_{type_map.get(st_type, 'unknown')}"
     
     def _build_cu_index(self):
+        import time
+        start = time.time()
         if not self.dwarfinfo:
             return
         
@@ -96,9 +149,14 @@ class ELFParser:
                 if 'DW_AT_low_pc' in die.attributes:
                     low_pc = die.attributes['DW_AT_low_pc'].value
                 if 'DW_AT_high_pc' in die.attributes:
-                    high_pc = die.attributes['DW_AT_high_pc'].value
+                    high_pc_attr = die.attributes['DW_AT_high_pc']
+                    high_pc = high_pc_attr.value
                     if hasattr(high_pc, 'value'):
                         high_pc = high_pc.value
+                    if isinstance(low_pc, int) and isinstance(high_pc, int):
+                        if high_pc_attr.form == 'DW_FORM_data1' or high_pc_attr.form == 'DW_FORM_data2' or \
+                           high_pc_attr.form == 'DW_FORM_data4' or high_pc_attr.form == 'DW_FORM_data8':
+                            high_pc = low_pc + high_pc
             except Exception:
                 pass
             
@@ -106,17 +164,38 @@ class ELFParser:
                 self._cu_cache.append((low_pc, high_pc, cu_idx))
         
         self._cu_cache.sort(key=lambda x: x[0])
+        elapsed = time.time() - start
+        print(f"[PERF] _build_cu_index: {len(self._cu_cache)} CUs, {elapsed:.3f}s")
+    
+    def _find_cu_by_address(self, address: int) -> Optional[CompileUnit]:
+        import bisect
+        if not self._cu_cache:
+            return None
+        
+        low_pcs = [cu[0] for cu in self._cu_cache]
+        idx = bisect.bisect_right(low_pcs, address) - 1
+        if idx >= 0:
+            low_pc, high_pc, cu_idx = self._cu_cache[idx]
+            if low_pc <= address < high_pc:
+                for i, cu in enumerate(self.dwarfinfo.iter_CUs()):
+                    if i == cu_idx:
+                        return cu
+        return None
     
     def _build_type_cache(self):
+        import time
+        start = time.time()
         if not self.dwarfinfo:
             return
 
         # 第一遍：收集所有类型 DIE，按 offset 建立索引
         die_by_offset: Dict[int, 'DIE'] = {}
+        die_count = 0
         for cu in self.dwarfinfo.iter_CUs():
             for die in cu.iter_DIEs():
                 if die.tag:
                     die_by_offset[die.offset] = die
+                    die_count += 1
 
         # 第二遍：构建类型信息
         for die in die_by_offset.values():
@@ -157,6 +236,9 @@ class ELFParser:
                         # 同时存"按原始类型偏移"和"按变量名"两份索引
                         self._var_type_cache[var_name] = var_type_info
 
+        elapsed = time.time() - start
+        print(f"[PERF] _build_type_cache: {die_count} DIEs, {len(self._struct_type_cache)} types, {len(self._var_type_cache)} vars, {elapsed:.3f}s")
+
     def _resolve_type_ref(self, die: 'DIE', die_by_offset: Dict[int, 'DIE']) -> Optional['DIE']:
         """解析 DW_AT_type 引用，把 CU 相对偏移转为 .debug_info 绝对偏移再查找 DIE。
 
@@ -172,9 +254,21 @@ class ELFParser:
             offset += die.cu.cu_offset
         return die_by_offset.get(offset)
 
-    def _parse_struct_die(self, die: DIE, die_by_offset: Dict[int, 'DIE'], _depth: int = 0) -> Dict[str, Any]:
-        if _depth > 8:
-            return {'kind': 'struct', 'name': None, 'byte_size': 0, 'members': [], '_truncated': True}
+    def _parse_struct_die(self, die: DIE, die_by_offset: Dict[int, 'DIE'], _depth: int = 0, 
+                         _visited: Optional[set] = None) -> Dict[str, Any]:
+        if _visited is None:
+            _visited = set()
+        
+        if die.offset in _visited:
+            return {'kind': 'struct', 'name': None, 'byte_size': 0, 'members': [], '_circular_ref': True}
+        
+        _visited.add(die.offset)
+        
+        if _depth > 20:
+            import sys
+            print(f"[DEBUG] Deep recursion in struct parsing (depth={_depth}), die offset={die.offset:x}", file=sys.stderr)
+            return {'kind': 'struct', 'name': None, 'byte_size': 0, 'members': [], '_deep_truncated': True}
+        
         info = {
             'kind': 'struct',
             'tag': die.tag,
@@ -189,12 +283,15 @@ class ELFParser:
 
         for child in die.iter_children():
             if child.tag == 'DW_TAG_member':
-                member = self._parse_member(child, die_by_offset, _depth + 1)
+                member = self._parse_member(child, die_by_offset, _depth + 1, _visited)
                 if member:
                     info['members'].append(member)
+        
+        _visited.remove(die.offset)
         return info
 
-    def _parse_typedef_die(self, die: DIE, die_by_offset: Dict[int, 'DIE'], _depth: int = 0) -> Dict[str, Any]:
+    def _parse_typedef_die(self, die: DIE, die_by_offset: Dict[int, 'DIE'], _depth: int = 0, 
+                           _visited: Optional[set] = None) -> Dict[str, Any]:
         info = {
             'kind': 'typedef',
             'tag': die.tag,
@@ -210,7 +307,7 @@ class ELFParser:
         if ref_die:
             info['ref_type_offset'] = ref_die.offset
             # 递归解析被 typedef 的真实类型，把 byte_size 和 members 提升上来
-            ref_info = self._parse_any_die(ref_die, die_by_offset, _depth + 1)
+            ref_info = self._parse_any_die(ref_die, die_by_offset, _depth + 1, _visited)
             if ref_info:
                 info['ref_type'] = ref_info
                 info['byte_size'] = ref_info.get('byte_size', 0)
@@ -219,7 +316,8 @@ class ELFParser:
                     info['members'] = ref_info['members']
         return info
 
-    def _parse_pointer_die(self, die: DIE, die_by_offset: Dict[int, 'DIE'], _depth: int = 0) -> Dict[str, Any]:
+    def _parse_pointer_die(self, die: DIE, die_by_offset: Dict[int, 'DIE'], _depth: int = 0, 
+                           _visited: Optional[set] = None) -> Dict[str, Any]:
         info = {
             'kind': 'pointer',
             'tag': die.tag,
@@ -234,7 +332,7 @@ class ELFParser:
         ref_die = self._resolve_type_ref(die, die_by_offset)
         if ref_die:
             info['ref_type_offset'] = ref_die.offset
-            info['ref_type'] = self._parse_any_die(ref_die, die_by_offset, _depth + 1)
+            info['ref_type'] = self._parse_any_die(ref_die, die_by_offset, _depth + 1, _visited)
             # 如果最终指向 char（可能经过 const_type 修饰），给个友好名字
             if self._is_char_pointer(info):
                 info['name'] = 'char*'
@@ -255,7 +353,8 @@ class ELFParser:
                 return False
         return False
 
-    def _parse_const_die(self, die: DIE, die_by_offset: Dict[int, 'DIE'], _depth: int = 0) -> Dict[str, Any]:
+    def _parse_const_die(self, die: DIE, die_by_offset: Dict[int, 'DIE'], _depth: int = 0, 
+                         _visited: Optional[set] = None) -> Dict[str, Any]:
         info = {
             'kind': 'const',
             'tag': die.tag,
@@ -267,14 +366,15 @@ class ELFParser:
         ref_die = self._resolve_type_ref(die, die_by_offset)
         if ref_die:
             info['ref_type_offset'] = ref_die.offset
-            info['ref_type'] = self._parse_any_die(ref_die, die_by_offset, _depth + 1)
+            info['ref_type'] = self._parse_any_die(ref_die, die_by_offset, _depth + 1, _visited)
             if info['ref_type']:
                 info['byte_size'] = info['ref_type'].get('byte_size', 0)
                 if info['ref_type'].get('name'):
                     info['name'] = 'const ' + info['ref_type']['name']
         return info
 
-    def _parse_array_die(self, die: DIE, die_by_offset: Dict[int, 'DIE'], _depth: int = 0) -> Dict[str, Any]:
+    def _parse_array_die(self, die: DIE, die_by_offset: Dict[int, 'DIE'], _depth: int = 0, 
+                         _visited: Optional[set] = None) -> Dict[str, Any]:
         info = {
             'kind': 'array',
             'tag': die.tag,
@@ -287,7 +387,7 @@ class ELFParser:
         ref_die = self._resolve_type_ref(die, die_by_offset)
         if ref_die:
             info['element_type_offset'] = ref_die.offset
-            info['element_type'] = self._parse_any_die(ref_die, die_by_offset, _depth + 1)
+            info['element_type'] = self._parse_any_die(ref_die, die_by_offset, _depth + 1, _visited)
 
         # 子节点 DW_TAG_subrange_type 包含数组长度
         for child in die.iter_children():
@@ -326,25 +426,26 @@ class ELFParser:
                     info['members'].append(enum_val)
         return info
 
-    def _parse_any_die(self, die: 'DIE', die_by_offset: Dict[int, 'DIE'], _depth: int = 0) -> Optional[Dict[str, Any]]:
+    def _parse_any_die(self, die: 'DIE', die_by_offset: Dict[int, 'DIE'], _depth: int = 0, 
+                       _visited: Optional[set] = None) -> Optional[Dict[str, Any]]:
         tag = die.tag
         if tag in ('DW_TAG_structure_type', 'DW_TAG_union_type'):
-            return self._parse_struct_die(die, die_by_offset, _depth)
+            return self._parse_struct_die(die, die_by_offset, _depth, _visited)
         elif tag == 'DW_TAG_enumeration_type':
             return self._parse_enum_die(die)
         elif tag == 'DW_TAG_base_type':
             return self._parse_base_type(die)
         elif tag == 'DW_TAG_typedef':
-            return self._parse_typedef_die(die, die_by_offset, _depth)
+            return self._parse_typedef_die(die, die_by_offset, _depth, _visited)
         elif tag == 'DW_TAG_pointer_type':
-            return self._parse_pointer_die(die, die_by_offset, _depth)
+            return self._parse_pointer_die(die, die_by_offset, _depth, _visited)
         elif tag == 'DW_TAG_array_type':
-            return self._parse_array_die(die, die_by_offset, _depth)
+            return self._parse_array_die(die, die_by_offset, _depth, _visited)
         elif tag == 'DW_TAG_const_type':
-            return self._parse_const_die(die, die_by_offset, _depth)
+            return self._parse_const_die(die, die_by_offset, _depth, _visited)
         elif tag == 'DW_TAG_volatile_type':
             # volatile 处理逻辑同 const
-            return self._parse_const_die(die, die_by_offset, _depth)
+            return self._parse_const_die(die, die_by_offset, _depth, _visited)
         return None
     
     def _parse_base_type(self, die: DIE) -> Dict[str, Any]:
@@ -360,7 +461,8 @@ class ELFParser:
         }
         return info
 
-    def _parse_member(self, die: DIE, die_by_offset: Dict[int, 'DIE'], _depth: int = 0) -> Dict[str, Any]:
+    def _parse_member(self, die: DIE, die_by_offset: Dict[int, 'DIE'], _depth: int = 0, 
+                      _visited: Optional[set] = None) -> Dict[str, Any]:
         member = {
             'name': None,
             'offset': 0,
@@ -398,7 +500,7 @@ class ELFParser:
             ref_die = self._resolve_type_ref(die, die_by_offset)
             if ref_die:
                 member['type_offset'] = ref_die.offset
-                type_info = self._parse_any_die(ref_die, die_by_offset, _depth + 1)
+                type_info = self._parse_any_die(ref_die, die_by_offset, _depth + 1, _visited)
                 if type_info:
                     member['type'] = type_info
                     member['type_name'] = type_info.get('name') or type_info.get('kind')
@@ -434,8 +536,14 @@ class ELFParser:
         return self._read_typed_value(type_info, sym['address'], dump_reader, depth=0)
 
     def _read_typed_value(self, type_info: Dict[str, Any], address: int,
-                         dump_reader, depth: int = 0) -> Any:
-        if depth > 8:
+                         dump_reader, depth: int = 0, 
+                         _visited: Optional[set] = None) -> Any:
+        if _visited is None:
+            _visited = set()
+        
+        if depth > 20:
+            import sys
+            print(f"[DEBUG] Deep recursion in _read_typed_value (depth={depth}), address=0x{address:x}", file=sys.stderr)
             return {'error': 'max depth exceeded'}
 
         if not type_info:
@@ -445,7 +553,7 @@ class ELFParser:
 
         # typedef/const/volatile：解引用后再走一遍
         if kind in ('typedef', 'const', 'volatile'):
-            return self._read_typed_value(type_info.get('ref_type'), address, dump_reader, depth + 1)
+            return self._read_typed_value(type_info.get('ref_type'), address, dump_reader, depth + 1, _visited)
 
         # 基础类型：直接读取
         if kind == 'base':
@@ -492,16 +600,27 @@ class ELFParser:
             result = []
             for i in range(count):
                 elem_addr = address + i * elem_size
-                result.append(self._read_typed_value(elem_type, elem_addr, dump_reader, depth + 1))
+                result.append(self._read_typed_value(elem_type, elem_addr, dump_reader, depth + 1, _visited))
             return result
 
         # 结构体：逐成员读取
         if kind in ('struct', 'union'):
+            type_offset = type_info.get('type_offset')
+            if type_offset is not None:
+                visit_key = (address, type_offset)
+                if visit_key in _visited:
+                    return {'error': 'circular reference detected'}
+                _visited.add(visit_key)
+            
             result = {}
             for m in type_info.get('members', []):
                 m_name = m.get('name') or f'<anon@{m.get("offset")}>'
                 m_addr = address + m.get('offset', 0)
-                result[m_name] = self._read_typed_value(m.get('type'), m_addr, dump_reader, depth + 1)
+                result[m_name] = self._read_typed_value(m.get('type'), m_addr, dump_reader, depth + 1, _visited)
+            
+            if visit_key is not None:
+                _visited.remove(visit_key)
+            
             return result
 
         return None

@@ -1,4 +1,4 @@
-from .base import DisplayBase
+from .base import DisplayBase, ResourceMetadata
 from typing import Dict, List, Any
 import threading
 import time
@@ -11,32 +11,8 @@ class WebGuiDisplay(DisplayBase):
         self.running = False
         self.port = self.options.get('port', 5000)
     
-    def show_rtos_tasks(self, tasks: List[Dict]):
-        print(f"[WebGUI] Tasks: {len(tasks)} items")
-    
-    def show_rtos_mutexes(self, mutexes: List[Dict]):
-        print(f"[WebGUI] Mutexes: {len(mutexes)} items")
-    
-    def show_rtos_semaphores(self, semaphores: List[Dict]):
-        print(f"[WebGUI] Semaphores: {len(semaphores)} items")
-    
-    def show_rtos_queues(self, queues: List[Dict]):
-        print(f"[WebGUI] Queues: {len(queues)} items")
-    
-    def show_rtos_events(self, events: List[Dict]):
-        print(f"[WebGUI] Events: {len(events)} items")
-    
-    def show_rtos_timers(self, timers: List[Dict]):
-        print(f"[WebGUI] Timers: {len(timers)} items")
-    
-    def show_rtos_block_pools(self, pools: List[Dict]):
-        print(f"[WebGUI] Block Pools: {len(pools)} items")
-    
-    def show_rtos_byte_pools(self, pools: List[Dict]):
-        print(f"[WebGUI] Byte Pools: {len(pools)} items")
-    
-    def show_test_points(self, test_points: List[Dict]):
-        print(f"[WebGUI] Test Points: {len(test_points)} items")
+    def show_resource(self, resource_type: str, data: List[Dict], metadata: ResourceMetadata):
+        print(f"[WebGUI] {metadata.icon} {metadata.label}: {len(data)} items")
     
     def show_detail(self, resource_type: str, address: int):
         print(f"[WebGUI] Detail: {resource_type} @ 0x{address:08X}")
@@ -47,17 +23,28 @@ class WebGuiDisplay(DisplayBase):
             
             app = Flask(__name__)
             
-            @app.route('/api/rtos_data')
-            def api_rtos_data():
+            @app.route('/api/resources')
+            def api_resources():
                 if self.data_adapter:
-                    return jsonify(self.data_adapter.get_rtos_data())
+                    resource_types = self.data_adapter.get_all_resource_types()
+                    result = {}
+                    for rt in resource_types:
+                        result[rt] = self.data_adapter.get_resource_data(rt)
+                    return jsonify(result)
                 return jsonify({})
             
-            @app.route('/api/test_points')
-            def api_test_points():
+            @app.route('/api/metadata/<resource_type>')
+            def api_metadata(resource_type):
                 if self.data_adapter:
-                    return jsonify(self.data_adapter.get_test_points())
-                return jsonify([])
+                    meta = self.data_adapter.get_resource_metadata(resource_type)
+                    if meta:
+                        return jsonify({
+                            'resource_type': meta.resource_type,
+                            'label': meta.label,
+                            'icon': meta.icon,
+                            'fields': meta.fields,
+                        })
+                return jsonify({})
             
             @app.route('/api/detail/<resource_type>/<int:address>')
             def api_detail(resource_type, address):
@@ -78,32 +65,47 @@ class WebGuiDisplay(DisplayBase):
                             table { border-collapse: collapse; width: 100%; }
                             th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
                             th { background-color: #f2f2f2; }
+                            h2 { display: flex; align-items: center; gap: 10px; }
                         </style>
                     </head>
                     <body>
                         <h1>ELF Parser - Web GUI</h1>
                         <div id="content">Loading data...</div>
                         <script>
-                            fetch('/api/rtos_data').then(r => r.json()).then(data => {
+                            async function loadData() {
+                                const resources = await fetch('/api/resources').then(r => r.json());
                                 let html = '';
-                                for(let key in data) {
-                                    html += `<div class="panel"><h2>${key}</h2>`;
-                                    if(data[key].length > 0) {
+                                for(let key in resources) {
+                                    const meta = await fetch(`/api/metadata/${key}`).then(r => r.json());
+                                    const icon = meta.icon || '📦';
+                                    const label = meta.label || key;
+                                    html += `<div class="panel"><h2>${icon} ${label}</h2>`;
+                                    if(resources[key].length > 0) {
                                         html += '<table><thead><tr>';
-                                        const headers = Object.keys(data[key][0]);
+                                        const headers = meta.fields ? meta.fields.map(f => f.label) : Object.keys(resources[key][0]);
                                         headers.forEach(h => html += `<th>${h}</th>`);
                                         html += '</tr></thead><tbody>';
-                                        data[key].forEach(item => {
+                                        resources[key].forEach(item => {
                                             html += '<tr>';
-                                            headers.forEach(h => html += `<td>${item[h]}</td>`);
+                                            headers.forEach(h => {
+                                                const fieldName = meta.fields ? meta.fields.find(f => f.label === h)?.name : h;
+                                                let value = item[fieldName];
+                                                if(typeof value === 'number' && value >= 0) {
+                                                    value = '0x' + value.toString(16).toUpperCase().padStart(8, '0');
+                                                }
+                                                html += `<td>${value}</td>`;
+                                            });
                                             html += '</tr>';
                                         });
                                         html += '</tbody></table>';
+                                    } else {
+                                        html += '<p>(Empty)</p>';
                                     }
                                     html += '</div>';
                                 }
                                 document.getElementById('content').innerHTML = html;
-                            });
+                            }
+                            loadData();
                         </script>
                     </body>
                     </html>
@@ -127,7 +129,7 @@ class WebGuiDisplay(DisplayBase):
         self.server_thread.start()
         
         print("[WebGUI] Server started in background")
-        print("[WebGUI] Open http://localhost:5000 in your browser")
+        print(f"[WebGUI] Open http://localhost:{self.port} in your browser")
         
         try:
             while self.running:

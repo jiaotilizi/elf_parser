@@ -6,9 +6,9 @@ Uses _common/qemu_runner.py QemuRunner driven by profile YAML.
 import os
 import sys
 
-_FIRMWARE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _FIRMWARE_DIR not in sys.path:
-    sys.path.insert(0, _FIRMWARE_DIR)
+_TEST_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _TEST_DIR not in sys.path:
+    sys.path.insert(0, _TEST_DIR)
 
 from _common.qemu_runner import runner_from_profile
 
@@ -19,8 +19,8 @@ def main():
     runner = runner_from_profile(
         profile_name='test/qemu_m4_threadx',
         scenario_dir=SCENARIO_DIR,
-        elf_filename='build/sample_threadx.elf',
-        dump_filename='build/threadx_ram_dump.bin',
+        elf_filename='output/img/sample_threadx.elf',
+        dump_filename='output/img/threadx_ram_dump.bin',
     )
     ok = runner.run_and_dump()
     if ok:
