@@ -1,0 +1,12 @@
+*.elf
+*.bin
+*.o
+*.map
+*.dump
+*.a
+*.axf
+
+output/img/*
+output/tmp/*
+!output/img/.gitkeep
+!output/tmp/.gitkeep
