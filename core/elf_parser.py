@@ -21,6 +21,8 @@ class ELFParser:
         self._is_32bit = False
         self._address_size = 4
         
+        self._elf_segments: List[Dict[str, Any]] = []
+        
         self._parse_elf()
     
     def _parse_elf(self):
@@ -28,6 +30,17 @@ class ELFParser:
             self.elffile = ELFFile(f)
             self._is_32bit = self.elffile.elfclass == 32
             self._address_size = 4 if self._is_32bit else 8
+            
+            for seg in self.elffile.iter_segments():
+                if seg['p_type'] == 'PT_LOAD':
+                    seg_vaddr = seg['p_vaddr']
+                    seg_filesz = seg['p_filesz']
+                    seg_data = seg.data()
+                    self._elf_segments.append({
+                        'vaddr': seg_vaddr,
+                        'filesz': seg_filesz,
+                        'data': seg_data,
+                    })
             
             self._parse_symbols()
             
@@ -76,12 +89,18 @@ class ELFParser:
             return
         
         for cu_idx, cu in enumerate(self.dwarfinfo.iter_CUs()):
+            low_pc = None
+            high_pc = None
             try:
-                low_pc = cu.get_low_pc()
-                high_pc = cu.get_high_pc()
-            except AttributeError:
-                low_pc = None
-                high_pc = None
+                die = cu.get_top_DIE()
+                if 'DW_AT_low_pc' in die.attributes:
+                    low_pc = die.attributes['DW_AT_low_pc'].value
+                if 'DW_AT_high_pc' in die.attributes:
+                    high_pc = die.attributes['DW_AT_high_pc'].value
+                    if hasattr(high_pc, 'value'):
+                        high_pc = high_pc.value
+            except Exception:
+                pass
             
             if low_pc is not None and high_pc is not None:
                 self._cu_cache.append((low_pc, high_pc, cu_idx))
@@ -191,7 +210,7 @@ class ELFParser:
         if ref_die:
             info['ref_type_offset'] = ref_die.offset
             # 递归解析被 typedef 的真实类型，把 byte_size 和 members 提升上来
-            ref_info = self._parse_any_die(ref_die, die_by_offset, _depth)
+            ref_info = self._parse_any_die(ref_die, die_by_offset, _depth + 1)
             if ref_info:
                 info['ref_type'] = ref_info
                 info['byte_size'] = ref_info.get('byte_size', 0)
@@ -215,7 +234,7 @@ class ELFParser:
         ref_die = self._resolve_type_ref(die, die_by_offset)
         if ref_die:
             info['ref_type_offset'] = ref_die.offset
-            info['ref_type'] = self._parse_any_die(ref_die, die_by_offset, _depth)
+            info['ref_type'] = self._parse_any_die(ref_die, die_by_offset, _depth + 1)
             # 如果最终指向 char（可能经过 const_type 修饰），给个友好名字
             if self._is_char_pointer(info):
                 info['name'] = 'char*'
@@ -248,7 +267,7 @@ class ELFParser:
         ref_die = self._resolve_type_ref(die, die_by_offset)
         if ref_die:
             info['ref_type_offset'] = ref_die.offset
-            info['ref_type'] = self._parse_any_die(ref_die, die_by_offset, _depth)
+            info['ref_type'] = self._parse_any_die(ref_die, die_by_offset, _depth + 1)
             if info['ref_type']:
                 info['byte_size'] = info['ref_type'].get('byte_size', 0)
                 if info['ref_type'].get('name'):
@@ -268,7 +287,7 @@ class ELFParser:
         ref_die = self._resolve_type_ref(die, die_by_offset)
         if ref_die:
             info['element_type_offset'] = ref_die.offset
-            info['element_type'] = self._parse_any_die(ref_die, die_by_offset, _depth)
+            info['element_type'] = self._parse_any_die(ref_die, die_by_offset, _depth + 1)
 
         # 子节点 DW_TAG_subrange_type 包含数组长度
         for child in die.iter_children():
@@ -379,7 +398,7 @@ class ELFParser:
             ref_die = self._resolve_type_ref(die, die_by_offset)
             if ref_die:
                 member['type_offset'] = ref_die.offset
-                type_info = self._parse_any_die(ref_die, die_by_offset, _depth)
+                type_info = self._parse_any_die(ref_die, die_by_offset, _depth + 1)
                 if type_info:
                     member['type'] = type_info
                     member['type_name'] = type_info.get('name') or type_info.get('kind')
@@ -581,6 +600,20 @@ class ELFParser:
                     dump_offset = address - seg_vaddr
                     if dump_offset + size <= len(dump_data):
                         return dump_data[dump_offset:dump_offset + size]
+        return None
+    
+    def read_memory_from_elf(self, address: int, size: int) -> Optional[bytes]:
+        for seg in self._elf_segments:
+            seg_vaddr = seg['vaddr']
+            seg_filesz = seg['filesz']
+            seg_data = seg['data']
+            
+            if seg_vaddr <= address < seg_vaddr + seg_filesz:
+                file_offset = address - seg_vaddr
+                actual_size = min(size, len(seg_data) - file_offset)
+                if actual_size > 0:
+                    return seg_data[file_offset:file_offset + actual_size]
+        
         return None
     
     def parse_struct_from_dump(self, struct_name: str, address: int, dump_data: bytes) -> Optional[Dict[str, Any]]:
