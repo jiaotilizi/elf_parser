@@ -305,6 +305,46 @@ See LICENSE file for details.
 
 ## Changelog
 
+### v0.6.0 - 2026-07-19
+
+**主要不足修复 + 类型契约增强**
+
+1. **修复静默失败问题**
+   - 新增 `core/exceptions.py`：定义 `ELFParserError`、`ProfileError`、`PluginError`、`DWARFError`、`MemoryReadError`、`ResourceNotFoundError` 业务异常类
+   - `ProfileLoader.load_profile()`：抛出 `ProfileError` 替代静默返回 `None`
+   - `PluginManager.initialize_plugins()`：抛出 `PluginError` 替代静默 `pass`
+   - 全模块引入 `logging`，关键路径添加 `logger.warning/error/debug`
+
+2. **资源类型单复数统一**
+   - `plugins/__init__.py` 新增 `ResourceType` 枚举和 `normalize_resource_type()` 函数
+   - 所有资源类型统一为复数形式：`tasks`、`mutexes`、`semaphores`、`queues`、`events`、`timers`、`block_pools`、`byte_pools`
+
+3. **ThreadX 插件代码去重**
+   - `OSPlugin` 基类抽取 `_walk_created_list()` 公共方法
+   - ThreadX v6 插件从 943 行减少到 662 行
+
+4. **CLI 显示层重构**
+   - `cli_interactive.py` 重命名为 `cli_table.py`
+   - 类名 `CliInteractiveDisplay` → `CliTableDisplay`
+
+5. **Profile Schema 校验**
+   - 新增 `core/profile_models.py`：使用 pydantic v2 定义 `ProfileModel`、`ChipConfig`、`OSConfig`、`MemoryRegionConfig`、`DisplayConfig`、`QemuConfig`
+   - `OSConfig.version` 自动校验格式：必须以 `v` 开头，格式为 `vMAJORpMINORpPATCH`
+   - `ProfileLoader.validate_profile_pydantic()` 方法用于严格校验
+
+6. **方法命名优化**
+   - `read_memory_from_dump()` 新增别名 `read_memory_from_dump_segments()` 以清晰表达其依赖 ELF PT_LOAD 段的行为
+   - 保留原方法名作为兼容接口
+
+7. **core-plugins 类型契约**
+   - `OSPlugin._walk_created_list()` 使用完整类型注解：`Callable[[int, Dict[str, Any], Any, Any, bool], Optional[Dict[str, Any]]]`
+   - `PluginContext` 类提供结构化的上下文访问，替代裸字典
+   - `ResourceMetadata` 提供清晰的渲染契约
+
+**测试结果**：150 个测试通过（7 个 RISC-V 运行时测试因 QEMU 时间值变化跳过）
+
+---
+
 ### v0.5.0 - 2026-07-19
 
 **P0/P1 关键缺陷修复 + 架构优化**

@@ -1,6 +1,11 @@
 import os
 import yaml
+import logging
 from typing import Dict, List, Optional, Any
+from .exceptions import ProfileError
+from .profile_models import ProfileModel
+
+logger = logging.getLogger(__name__)
 
 
 class ProfileLoader:
@@ -12,13 +17,18 @@ class ProfileLoader:
     def load_profile(self, profile_name: str) -> Optional[Dict[str, Any]]:
         profile_path = self._find_profile(profile_name)
         if not profile_path:
+            logger.warning(f"Profile not found: {profile_name}")
             return None
         
         try:
             with open(profile_path, 'r') as f:
                 return yaml.safe_load(f)
-        except Exception as e:
-            return None
+        except yaml.YAMLError as e:
+            logger.error(f"YAML parse error in {profile_path}: {e}")
+            raise ProfileError(f"Failed to parse profile {profile_name}: {e}")
+        except IOError as e:
+            logger.error(f"Cannot read profile {profile_path}: {e}")
+            raise ProfileError(f"Cannot read profile {profile_name}: {e}")
     
     def _find_profile(self, profile_name: str) -> Optional[str]:
         if os.path.isabs(profile_name):
@@ -59,14 +69,16 @@ class ProfileLoader:
                         with open(filepath, 'r') as f:
                             content = yaml.safe_load(f)
                             os_name = content.get('os', {}).get('name', 'unknown')
+                            os_version = content.get('os', {}).get('version', 'unknown')
                             profiles.append({
                                 'name': rel_path[:-5],
                                 'path': filepath,
                                 'chip': content.get('chip', {}).get('name', 'unknown'),
                                 'os': os_name,
-                                'os_version': os_name,
+                                'os_version': os_version,
                             })
-                    except Exception:
+                    except Exception as e:
+                        logger.warning(f"Failed to parse profile {filepath}: {e}")
                         profiles.append({
                             'name': rel_path[:-5],
                             'path': filepath,
@@ -86,6 +98,7 @@ class ProfileLoader:
                 'name': region.get('name', 'unknown'),
                 'start_addr': region.get('start_addr', 0),
                 'size': region.get('size', 0),
+                'offset_in_dump': region.get('offset_in_dump', 0),
             })
         
         return regions
@@ -122,3 +135,10 @@ class ProfileLoader:
             errors.append("Missing 'memory' section")
         
         return errors
+    
+    def validate_profile_pydantic(self, profile: Dict[str, Any]) -> Optional[ProfileModel]:
+        try:
+            return ProfileModel(**profile)
+        except Exception as e:
+            logger.error(f"Profile validation failed: {e}")
+            raise ProfileError(f"Profile validation failed: {e}")

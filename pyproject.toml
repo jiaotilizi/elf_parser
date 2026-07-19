@@ -31,6 +31,7 @@ elf_parser = "main:main"
 [project.dependencies]
 pyelftools = ">=0.28"
 pyyaml = ">=6.0"
+pydantic = ">=2.0"
 
 [project.optional-dependencies]
 web = ["flask>=2.0"]

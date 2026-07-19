@@ -800,7 +800,7 @@ class ELFParser:
     def get_struct_type(self, struct_name: str) -> Optional[Dict[str, Any]]:
         return self._struct_type_cache.get(struct_name)
 
-    def read_memory_from_dump(self, address: int, size: int, dump_data: bytes) -> Optional[bytes]:
+    def read_memory_from_dump_segments(self, address: int, size: int, dump_data: bytes) -> Optional[bytes]:
         for seg in self.elffile.iter_segments():
             if seg['p_type'] == 'PT_LOAD':
                 seg_vaddr = seg['p_vaddr']
@@ -811,6 +811,9 @@ class ELFParser:
                     if dump_offset + size <= len(dump_data):
                         return dump_data[dump_offset:dump_offset + size]
         return None
+    
+    def read_memory_from_dump(self, address: int, size: int, dump_data: bytes) -> Optional[bytes]:
+        return self.read_memory_from_dump_segments(address, size, dump_data)
     
     def read_memory_from_elf(self, address: int, size: int) -> Optional[bytes]:
         for seg in self._elf_segments:

@@ -1,7 +1,12 @@
 import os
 import sys
 import importlib
+import logging
 from typing import Dict, List, Optional, Type, Any, Callable
+
+from .exceptions import PluginError
+
+logger = logging.getLogger(__name__)
 
 
 class Plugin:
@@ -44,10 +49,12 @@ class OSPlugin(Plugin):
         dump_reader = context.get('dump_reader')
         
         if not elf_parser or not dump_reader:
+            logger.warning(f"Missing elf_parser or dump_reader in context for {symbol_name}")
             return []
         
         list_sym = elf_parser.get_symbol_by_name(symbol_name)
         if not list_sym:
+            logger.warning(f"Symbol not found: {symbol_name}")
             return []
         
         list_addr = list_sym['address']
@@ -55,6 +62,7 @@ class OSPlugin(Plugin):
         
         struct_type = elf_parser.get_struct_type(struct_name)
         if not struct_type:
+            logger.warning(f"Struct type not found: {struct_name}")
             return []
         
         head_ptr = dump_reader.read_pointer(list_addr, is_32bit)
@@ -123,6 +131,7 @@ class PluginManager:
         plugins_dir = os.path.abspath(plugins_dir)
         
         if not os.path.exists(plugins_dir):
+            logger.warning(f"Plugins directory not found: {plugins_dir}")
             return
         
         for root, dirs, files in os.walk(plugins_dir):
@@ -154,10 +163,13 @@ class PluginManager:
                     try:
                         plugin_instance = attr()
                         self._register_plugin(plugin_instance)
+                        logger.debug(f"Loaded plugin: {plugin_instance.name}")
                     except Exception as e:
-                        pass
+                        logger.error(f"Failed to instantiate plugin {attr_name}: {e}")
+        except ImportError as e:
+            logger.error(f"Failed to import plugin module {module_path}: {e}")
         except Exception as e:
-            pass
+            logger.error(f"Unexpected error loading plugin {module_path}: {e}")
         finally:
             if plugins_dir in sys.path:
                 sys.path.remove(plugins_dir)
@@ -168,15 +180,20 @@ class PluginManager:
         if isinstance(plugin, OSPlugin):
             key = f"{plugin.os_name}_{plugin.os_version}"
             self.os_plugins[key] = plugin
+            logger.debug(f"Registered OS plugin: {key}")
         elif isinstance(plugin, ModulePlugin):
             self.module_plugins[plugin.name] = plugin
+            logger.debug(f"Registered module plugin: {plugin.name}")
     
     def get_plugin(self, name: str) -> Optional[Plugin]:
         return self.plugins.get(name)
     
     def get_os_plugin(self, os_name: str, os_version: str) -> Optional[OSPlugin]:
         key = f"{os_name}_{os_version}"
-        return self.os_plugins.get(key)
+        plugin = self.os_plugins.get(key)
+        if not plugin:
+            logger.warning(f"No OS plugin found for {key}")
+        return plugin
     
     def get_module_plugin(self, name: str) -> Optional[ModulePlugin]:
         return self.module_plugins.get(name)
@@ -192,6 +209,8 @@ class PluginManager:
             os_plugin = self.get_os_plugin(os_name, os_version)
             if os_plugin:
                 loaded_plugins.append(os_plugin)
+            else:
+                logger.warning(f"OS plugin not found: {os_name}_{os_version}")
         elif os_name:
             os_plugin = self.os_plugins.get(os_name)
             if os_plugin:
@@ -202,6 +221,8 @@ class PluginManager:
             module_plugin = self.get_module_plugin(module_name)
             if module_plugin:
                 loaded_plugins.append(module_plugin)
+            else:
+                logger.warning(f"Module plugin not found: {module_name}")
         
         return loaded_plugins
     
@@ -211,8 +232,11 @@ class PluginManager:
             try:
                 if plugin.initialize(context):
                     initialized.append(plugin)
+                else:
+                    logger.warning(f"Plugin {plugin.name} initialization returned False")
             except Exception as e:
-                pass
+                logger.error(f"Failed to initialize plugin {plugin.name}: {e}")
+                raise PluginError(f"Failed to initialize plugin {plugin.name}: {e}")
         return initialized
     
     def execute_plugins(self, plugins: List[Plugin], context: Dict[str, Any]) -> Dict[str, Any]:
@@ -223,6 +247,7 @@ class PluginManager:
                 if result:
                     results[plugin.name] = result
             except Exception as e:
+                logger.error(f"Failed to execute plugin {plugin.name}: {e}")
                 results[plugin.name] = {'error': str(e)}
         return results
     
