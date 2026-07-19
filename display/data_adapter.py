@@ -106,36 +106,38 @@ class DataAdapter:
                 {'name': 'timestamp', 'label': 'Time', 'type': 'string'},
             ]
         ),
+        'assert_info': ResourceMetadata(
+            resource_type='assert_info',
+            label='Assert Info',
+            icon='⚠️',
+            primary_key='address',
+            fields=[
+                {'name': 'address', 'label': 'Address', 'type': 'hex'},
+                {'name': 'assert_id', 'label': 'Assert ID', 'type': 'number'},
+                {'name': 'file_name', 'label': 'File', 'type': 'string'},
+                {'name': 'line_number', 'label': 'Line', 'type': 'number'},
+            ]
+        ),
+        'trace_buffer': ResourceMetadata(
+            resource_type='trace_buffer',
+            label='Trace Buffer',
+            icon='📊',
+            primary_key='timestamp',
+            fields=[
+                {'name': 'timestamp', 'label': 'Time', 'type': 'number'},
+                {'name': 'type', 'label': 'Type', 'type': 'string'},
+                {'name': 'point_id', 'label': 'Point ID', 'type': 'number'},
+                {'name': 'task_id', 'label': 'Task ID', 'type': 'number'},
+            ]
+        ),
     }
 
-    def __init__(self, plugin_manager, context: Dict[str, Any], cache_ttl: int = 30):
-        self.plugin_manager = plugin_manager
+    def __init__(self, context: Dict[str, Any], cache_ttl: int = 30):
         self.context = context
         self._cached_data = {}
         self._metadata_cache = {}
         self._cache_timestamp = 0
         self._cache_ttl = cache_ttl
-    
-    def _get_os_plugin(self):
-        profile = self.context.get('profile', {})
-        os_config = profile.get('os', {})
-        os_name = os_config.get('name')
-        os_version = os_config.get('version')
-        
-        if os_name and os_version:
-            return self.plugin_manager.get_os_plugin(os_name, os_version)
-        
-        if os_name:
-            for plugin in self.plugin_manager.os_plugins.values():
-                if plugin.os_name == os_name:
-                    return plugin
-        
-        for plugin in self.plugin_manager.os_plugins.values():
-            return plugin
-        return None
-    
-    def _get_test_point_plugin(self):
-        return self.plugin_manager.module_plugins.get('test_point')
     
     def _load_all_data(self):
         import time
@@ -143,28 +145,12 @@ class DataAdapter:
         if self._cached_data and (now - self._cache_timestamp) < self._cache_ttl:
             return
         
-        os_plugin = self._get_os_plugin()
-        if os_plugin:
-            try:
-                os_data = os_plugin.execute(self.context)
-                for key, value in os_data.items():
-                    if isinstance(value, list):
-                        self._cached_data[key] = value
-            except Exception as e:
-                print(f"Error getting OS data: {e}")
+        plugin_results = self.context.get('results', {})
+        for plugin_name, plugin_data in plugin_results.items():
+            for key, value in plugin_data.items():
+                if isinstance(value, list):
+                    self._cached_data[key] = value
         
-        tp_plugin = self._get_test_point_plugin()
-        if tp_plugin:
-            try:
-                tp_data = tp_plugin.execute(self.context)
-                if 'test_points' in tp_data:
-                    self._cached_data['test_points'] = tp_data['test_points']
-                if 'trace_buffer' in tp_data:
-                    self._cached_data['trace_buffer'] = tp_data['trace_buffer']
-            except Exception as e:
-                print(f"Error getting test point data: {e}")
-        
-        import time
         self._cache_timestamp = time.time()
     
     def get_all_resource_types(self) -> List[str]:
@@ -182,35 +168,22 @@ class DataAdapter:
         if resource_type in self.DEFAULT_METADATA:
             return self.DEFAULT_METADATA[resource_type]
         
-        os_plugin = self._get_os_plugin()
-        if os_plugin and hasattr(os_plugin, 'get_metadata'):
-            try:
-                meta = os_plugin.get_metadata(resource_type)
-                if meta:
-                    self._metadata_cache[resource_type] = meta
-                    return meta
-            except Exception:
-                pass
-        
         return ResourceMetadata(
             resource_type=resource_type,
             label=resource_type.capitalize(),
         )
     
     def get_detail(self, resource_type: str, address: int) -> Optional[Dict[str, Any]]:
-        os_plugin = self._get_os_plugin()
-        if os_plugin and hasattr(os_plugin, 'get_detail'):
-            try:
-                return os_plugin.get_detail(resource_type, address)
-            except Exception as e:
-                print(f"Error getting detail: {e}")
+        plugins = self.context.get('plugins', [])
         
-        tp_plugin = self._get_test_point_plugin()
-        if tp_plugin and hasattr(tp_plugin, 'get_detail'):
-            try:
-                return tp_plugin.get_detail(resource_type, address)
-            except Exception as e:
-                print(f"Error getting test point detail: {e}")
+        for plugin in plugins:
+            if hasattr(plugin, 'get_detail'):
+                try:
+                    result = plugin.get_detail(resource_type, address)
+                    if result is not None:
+                        return result
+                except Exception:
+                    continue
         
         return None
     

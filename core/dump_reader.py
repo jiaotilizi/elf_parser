@@ -188,3 +188,14 @@ class DumpReader:
     
     def get_dump_size(self) -> int:
         return len(self.dump_data)
+    
+    def match_keywords(self, keywords: List[str]) -> List[str]:
+        unmatched = []
+        
+        dump_text = self.dump_data.decode('ascii', errors='ignore').lower()
+        
+        for keyword in keywords:
+            if keyword.lower() not in dump_text:
+                unmatched.append(keyword)
+        
+        return unmatched

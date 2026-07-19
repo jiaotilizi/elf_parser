@@ -25,25 +25,31 @@ class TestQEMUM4ThreadXFirmwareAutoParse(unittest.TestCase):
 
         cls.elf_parser = ELFParser(cls.elf_path)
         cls.dump_reader = DumpReader(cls.dump_path, regions)
+        cls.keywords = profile.get('keyword', [])
+
+    def test_keyword_match(self):
+        if not self.keywords:
+            self.skipTest("No keywords defined in profile")
+
+        elf_unmatched = self.elf_parser.match_keywords(self.keywords)
+        self.assertEqual(len(elf_unmatched), 0,
+                        f"Keyword match failed: ELF unmatched={elf_unmatched}")
 
     def test_threadx_thread_control_block_in_dwarf(self):
         self.assertIsNotNone(self.elf_parser.get_struct_type('TX_THREAD'),
                              "TX_THREAD type should exist in DWARF")
 
     def test_threadx_current_thread_non_null(self):
-        # 使用 parse_struct_auto 自动解引用 TX_THREAD* 指针，返回 dict 或 None
         current_tcb = self.elf_parser.parse_struct_auto('_tx_thread_current_ptr', self.dump_reader)
         self.assertIsNotNone(current_tcb, "Current thread pointer should not be NULL")
         self.assertIsInstance(current_tcb, dict,
                             "Dereferenced TCB should be a dict of TX_THREAD fields")
 
     def test_threadx_current_thread_tcb_fields(self):
-        """验证 TCB 指针解引用后能拿到 TX_THREAD 的关键字段"""
         current_tcb = self.elf_parser.parse_struct_auto('_tx_thread_current_ptr', self.dump_reader)
         if current_tcb is None:
             self.skipTest("_tx_thread_current_ptr is NULL, cannot test TCB fields")
         self.assertIsInstance(current_tcb, dict)
-        # TX_THREAD 必含字段：tx_thread_name (char[32])
         self.assertIn('tx_thread_name', current_tcb,
                       "TX_THREAD should have tx_thread_name field")
 

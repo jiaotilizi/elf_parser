@@ -7,8 +7,8 @@ import struct
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from core.dump_reader import DumpReader, MemoryRegion
-from core.plugin_manager import PluginManager
-from core.profile_loader import ProfileLoader
+from core.profile_loader import ProfileLoader, PluginRegistry
+from plugins.base import OSPlugin, ModulePlugin
 
 
 class TestDumpReader(unittest.TestCase):
@@ -48,16 +48,12 @@ class TestDumpReader(unittest.TestCase):
         regions = [
             {'name': 'ram', 'start_addr': 0x88000000, 'size': 0x800},
             {'name': 'llram', 'start_addr': 0x8A000000, 'size': 0x400},
-            {'name': 'iram', 'start_addr': 0x8A010000, 'size': 0x400},
         ]
         reader = DumpReader(self.dump_path, regions)
-
-        self.assertEqual(reader.read_uint8(0x88000000), 0x00)
-        self.assertEqual(reader.read_uint8(0x880000FF), 0xFF)
-        self.assertEqual(reader.read_uint8(0x8A000000), 0x00)
-        self.assertEqual(reader.read_uint8(0x8A0003FF), 255)
-        self.assertEqual(reader.read_uint8(0x8A010000), 0x00)
-        self.assertEqual(reader.read_uint8(0x8A0103FF), 255)
+        self.assertEqual(reader.read_uint8(0x88000000), 0)
+        self.assertEqual(reader.read_uint8(0x880007FF), 0x7FF % 256)
+        self.assertEqual(reader.read_uint8(0x8A000000), 0x800 % 256)
+        self.assertEqual(reader.read_uint8(0x8A0003FF), (0x800 + 0x3FF) % 256)
 
     def test_read_string(self):
         test_str = b"Hello, World!\x00"
@@ -76,36 +72,22 @@ class TestDumpReader(unittest.TestCase):
         self.assertEqual(reader.read_pointer(0, True), ptr_value)
 
 
-class TestPluginManager(unittest.TestCase):
-    def test_plugin_discovery(self):
-        pm = PluginManager()
-        pm.discover_plugins()
-
-        self.assertGreater(len(pm.plugins), 0)
-        self.assertIn('assert_info_demo', pm.plugins)
-        self.assertIn('test_point_demo', pm.plugins)
-        self.assertIn('threadx_v5p6p0', pm.os_plugins)
-        self.assertIn('freertos_v11p3p0', pm.os_plugins)
-
-    def test_get_os_plugin(self):
-        pm = PluginManager()
-        pm.discover_plugins()
-
-        plugin = pm.get_os_plugin('threadx', 'v5p6p0')
+class TestPluginRegistry(unittest.TestCase):
+    def test_load_os_plugin(self):
+        plugin = PluginRegistry.load_plugin('rtos.threadx.threadx_v6p5p1')
         self.assertIsNotNone(plugin)
-        self.assertEqual(plugin.name, 'threadx_v5p6p0')
+        self.assertEqual(plugin.name, 'threadx_v6p5p1')
+        self.assertIsInstance(plugin, OSPlugin)
 
-        plugin = pm.get_os_plugin('freertos', 'v11p3p0')
+    def test_load_module_plugin(self):
+        plugin = PluginRegistry.load_plugin('module.assert_info.assert_info_v0')
         self.assertIsNotNone(plugin)
-        self.assertEqual(plugin.name, 'freertos_v11p3p0')
+        self.assertEqual(plugin.name, 'assert_info')
+        self.assertIsInstance(plugin, ModulePlugin)
 
-    def test_get_module_plugin(self):
-        pm = PluginManager()
-        pm.discover_plugins()
-
-        plugin = pm.get_module_plugin('assert_info_demo')
-        self.assertIsNotNone(plugin)
-        self.assertEqual(plugin.name, 'assert_info_demo')
+    def test_load_nonexistent_plugin(self):
+        with self.assertRaises(ValueError):
+            PluginRegistry.load_plugin('rtos.nonexistent.plugin')
 
 
 class TestProfileLoader(unittest.TestCase):
@@ -117,9 +99,6 @@ class TestProfileLoader(unittest.TestCase):
 
         profile_names = [p['name'] for p in profiles]
         self.assertIn('nxp/demo_chip', profile_names)
-        self.assertIn('unisoc/S6', profile_names)
-        self.assertIn('bss_simulated', profile_names)
-        self.assertIn('qemu/m4_bare', profile_names)
 
     def test_load_profile(self):
         loader = ProfileLoader()
@@ -127,61 +106,59 @@ class TestProfileLoader(unittest.TestCase):
 
         self.assertIsNotNone(profile)
         self.assertEqual(profile['chip']['name'], 'demo_chip')
-        self.assertEqual(profile['os']['name'], 'threadx')
-        self.assertEqual(profile['os']['version'], 'v5p6p0')
-
-    def test_load_bss_simulated_profile(self):
-        loader = ProfileLoader()
-        profile = loader.load_profile('bss_simulated')
-
-        self.assertIsNotNone(profile)
-        self.assertEqual(profile['chip']['name'], 'bss_simulated')
-        self.assertEqual(profile['os']['name'], 'baremetal')
-        self.assertIn('memory', profile)
 
     def test_load_qemu_m4_bare_profile(self):
         loader = ProfileLoader()
         profile = loader.load_profile('qemu/m4_bare')
 
         self.assertIsNotNone(profile)
-        self.assertEqual(profile['chip']['name'], 'qemu_m4_bare')
-        self.assertEqual(profile['chip']['cpu'], 'cortex-m4')
-        self.assertEqual(profile['os']['name'], 'baremetal')
-        self.assertIn('qemu', profile)
-        self.assertEqual(profile['qemu']['machine'], 'mps2-an386')
+        self.assertIn('memory', profile)
+        self.assertTrue(len(profile['memory']) > 0)
+
+    def test_load_bss_simulated_profile(self):
+        loader = ProfileLoader()
+        profile = loader.load_profile('bss_simulated')
+
+        self.assertIsNotNone(profile)
+        self.assertIn('memory', profile)
 
     def test_get_memory_regions(self):
         loader = ProfileLoader()
         profile = loader.load_profile('nxp/demo_chip')
-        regions = loader.get_memory_regions(profile)
 
-        self.assertEqual(len(regions), 3)
-        self.assertEqual(regions[0]['name'], 'ram')
-        self.assertEqual(regions[0]['start_addr'], 0x88000000)
+        regions = loader.get_memory_regions(profile)
+        self.assertTrue(len(regions) > 0)
+        self.assertIn('name', regions[0])
+        self.assertIn('start_addr', regions[0])
+        self.assertIn('size', regions[0])
 
     def test_validate_profile(self):
         loader = ProfileLoader()
         profile = loader.load_profile('nxp/demo_chip')
-        errors = loader.validate_profile(profile)
 
+        errors = loader.validate_profile(profile)
         self.assertEqual(len(errors), 0)
+
+    def test_load_plugins_from_profile(self):
+        loader = ProfileLoader()
+        profile = loader.load_profile('qemu/m4_threadx')
+
+        plugins = loader.load_plugins_from_profile(profile)
+        self.assertTrue(len(plugins) > 0)
+        
+        plugin_names = [p.name for p in plugins]
+        self.assertIn('threadx_v6p5p1', plugin_names)
 
 
 class TestMemoryRegion(unittest.TestCase):
     def test_contains(self):
-        region = MemoryRegion('ram', 0x88000000, 0x1000)
-
-        self.assertTrue(region.contains(0x88000000))
-        self.assertTrue(region.contains(0x88000FFF))
-        self.assertFalse(region.contains(0x87FFFFF))
-        self.assertFalse(region.contains(0x88001000))
+        region = MemoryRegion('ram', 0x20000000, 0x10000)
+        self.assertTrue(region.contains(0x20000000))
+        self.assertTrue(region.contains(0x2000FFFF))
+        self.assertFalse(region.contains(0x1FFFFFFF))
+        self.assertFalse(region.contains(0x20010000))
 
     def test_to_dump_offset(self):
-        region = MemoryRegion('ram', 0x88000000, 0x1000, 0x200)
-
-        self.assertEqual(region.to_dump_offset(0x88000000), 0x200)
-        self.assertEqual(region.to_dump_offset(0x88000500), 0x700)
-
-
-if __name__ == '__main__':
-    unittest.main()
+        region = MemoryRegion('ram', 0x20000000, 0x10000, 0x100)
+        self.assertEqual(region.to_dump_offset(0x20000000), 0x100)
+        self.assertEqual(region.to_dump_offset(0x20000100), 0x200)

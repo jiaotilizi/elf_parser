@@ -1,11 +1,43 @@
 import os
+import sys
 import yaml
+import importlib
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Type
+
 from .exceptions import ProfileError
-from .profile_models import ProfileModel
 
 logger = logging.getLogger(__name__)
+
+
+class PluginRegistry:
+    @staticmethod
+    def load_plugin(plugin_path: str):
+        import_path = f"plugins.{plugin_path}"
+        
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+        
+        try:
+            module = importlib.import_module(import_path)
+            
+            from plugins.base import Plugin
+            for attr_name in dir(module):
+                attr = getattr(module, attr_name)
+                if isinstance(attr, type) and issubclass(attr, Plugin) and attr != Plugin:
+                    if attr.__name__ in ('OSPlugin', 'RTOSPlugin', 'ModulePlugin', 'Plugin'):
+                        continue
+                    return attr()
+            
+            logger.error(f"No plugin class found in {import_path}")
+            raise ValueError(f"No plugin class found in {import_path}")
+        except ImportError as e:
+            logger.error(f"Failed to import plugin {import_path}: {e}")
+            raise ValueError(f"Failed to import plugin {import_path}: {e}")
+        except Exception as e:
+            logger.error(f"Error loading plugin {import_path}: {e}")
+            raise
 
 
 class ProfileLoader:
@@ -125,17 +157,18 @@ class ProfileLoader:
             if 'name' not in profile['chip']:
                 errors.append("Missing 'chip.name'")
         
-        if 'os' in profile and 'name' not in profile['os']:
-            errors.append("Missing 'os.name'")
-        
-        if 'memory' not in profile:
-            errors.append("Missing 'memory' section")
-        
         return errors
     
-    def validate_profile_pydantic(self, profile: Dict[str, Any]) -> Optional[ProfileModel]:
-        try:
-            return ProfileModel(**profile)
-        except Exception as e:
-            logger.error(f"Profile validation failed: {e}")
-            raise ProfileError(f"Profile validation failed: {e}")
+    def load_plugins_from_profile(self, profile: Dict[str, Any]) -> List[Any]:
+        plugins = []
+        
+        plugins_config = profile.get('plugins', [])
+        for plugin_path in plugins_config:
+            try:
+                plugin = PluginRegistry.load_plugin(plugin_path)
+                plugins.append(plugin)
+                logger.debug(f"Loaded plugin: {plugin_path} -> {plugin.name}")
+            except Exception as e:
+                logger.warning(f"Failed to load plugin {plugin_path}: {e}")
+        
+        return plugins

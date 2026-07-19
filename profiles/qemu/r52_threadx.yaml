@@ -5,31 +5,30 @@ chip:
   arch: armv8-r
   cpu: cortex-r52
   bits: 32
-os:
-  name: threadx
-  version: v6p5p1
-  description: ThreadX v6p5p1 on QEMU Cortex-R52 with 10 threads + mutex/sem/queue/eventflags
 qemu:
   binary: qemu-system-arm
   machine: mps3-an536
   cpu: cortex-r52
   kernel_arg: -kernel
-  ram_base: 0x20000000
+  ram_base: 536870912
   ram_size: 4194304
   run_seconds: 3.0
+  wait_symbol: dump_ready
 memory:
 - name: ram
-  start_addr: 0x20000000
+  start_addr: 536870912
   size: 4194304
   offset_in_dump: 0
-modules:
-- assert_info
-- test_point
 plugins:
-- rtos/threadx
+- rtos.threadx.threadx_v6p5p1
+- module.assert_info.assert_info_v0
+- module.test_point.test_point_v0
 display:
   scheme: cli_basic
   options:
     show_hex: true
     show_address: true
     max_rows: 50
+keyword:
+- _tx_thread_created_ptr
+- thread_

@@ -1,12 +1,12 @@
 from typing import Dict, List, Optional, Any
-from core.plugin_manager import ModulePlugin
+from plugins.base import ModulePlugin
 
 
-class TestPointPluginDemo(ModulePlugin):
+class TestPointPlugin(ModulePlugin):
     def __init__(self):
         super().__init__(
-            name='test_point_demo',
-            version='1.0',
+            name='test_point',
+            version='0.1',
             module_type='test',
             description='Parse test point/trace information from global variable structures'
         )
@@ -251,9 +251,6 @@ class TestPointPluginDemo(ModulePlugin):
     def get_detail(self, resource_type: str, address: int) -> Optional[Dict[str, Any]]:
         if not self._context:
             return None
-        
-        from plugins import normalize_resource_type
-        resource_type = normalize_resource_type(resource_type)
         
         if resource_type == 'test_points':
             test_points = self.parse_test_points(self._context)

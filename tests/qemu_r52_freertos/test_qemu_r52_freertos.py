@@ -37,6 +37,15 @@ class TestQEMUR52FreeRTOSFirmwareAutoParse(unittest.TestCase):
         profile = profile_loader.load_profile('qemu/r52_freertos')
         regions = profile_loader.get_memory_regions(profile)
         self.dump_reader = DumpReader(self.DUMP_PATH, regions)
+        self.keywords = profile.get('keyword', [])
+
+    def test_keyword_match(self):
+        if not self.keywords:
+            self.skipTest("No keywords defined in profile")
+
+        elf_unmatched = self.elf_parser.match_keywords(self.keywords)
+        self.assertEqual(len(elf_unmatched), 0,
+                        f"Keyword match failed: ELF unmatched={elf_unmatched}")
 
     def test_freertos_elf_exists(self):
         """FreeRTOS ELF and dump both exist and are non-empty."""

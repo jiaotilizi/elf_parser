@@ -1,7 +1,27 @@
 from pydantic import BaseModel
-from typing import Optional
-from core.profile_models import ProfileModel, MemoryRegionConfig, ChipConfig, OSConfig, DisplayConfig
-from core.profile_registry import ProfileRegistry
+from typing import Optional, List
+
+
+class MemoryRegionConfig(BaseModel):
+    name: str
+    start_addr: int
+    size: int
+    offset_in_dump: int = 0
+
+
+class ChipConfig(BaseModel):
+    name: str
+    arch: Optional[str] = None
+
+
+class OSConfig(BaseModel):
+    name: str
+    version: Optional[str] = None
+
+
+class DisplayConfig(BaseModel):
+    scheme: str = 'cli_basic'
+    options: dict = {}
 
 
 class QemuConfig(BaseModel):
@@ -15,8 +35,18 @@ class QemuConfig(BaseModel):
     timeout: int = 30
 
 
-class QemuProfileModel(ProfileModel):
+class QemuProfileModel(BaseModel):
+    chip: ChipConfig
+    memory: List[MemoryRegionConfig]
+    os: Optional[OSConfig] = None
+    modules: List[str] = []
+    display: Optional[DisplayConfig] = None
     qemu: QemuConfig
 
 
-ProfileRegistry.register_profile_model('qemu', QemuProfileModel)
+class ProfileModel(BaseModel):
+    chip: ChipConfig
+    memory: List[MemoryRegionConfig]
+    os: Optional[OSConfig] = None
+    modules: List[str] = []
+    display: Optional[DisplayConfig] = None

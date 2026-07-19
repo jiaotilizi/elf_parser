@@ -58,6 +58,7 @@ ULONG                   queue_1_data[10];
 volatile ULONG          debug_step = 0xDEAD0000;
 volatile ULONG          debug_status = 0xBEEF0000;
 volatile ULONG          debug_bss_test;
+volatile ULONG          dump_ready = 0;
 
 
 void    thread_0_entry(ULONG thread_input);
@@ -180,6 +181,8 @@ void    thread_0_entry(ULONG thread_input)
 UINT    status;
 
 
+    dump_ready = 1;
+
     while(1)
     {
 
@@ -222,6 +225,8 @@ UINT    status;
         status = tx_semaphore_put(&semaphore_0);
         if (status != TX_SUCCESS)
             break;
+
+        tx_thread_sleep(1);
     }
 }
 
@@ -272,6 +277,10 @@ UINT    status;
         if (status != TX_SUCCESS)
             break;
 
+        status = tx_semaphore_put(&semaphore_0);
+        if (status != TX_SUCCESS)
+            break;
+
         tx_thread_sleep(5);
     }
 }
@@ -279,26 +288,9 @@ UINT    status;
 
 void    thread_5_entry(ULONG thread_input)
 {
-
-UINT    status;
-ULONG   actual_flags;
-
-
     while(1)
     {
-
         thread_5_counter++;
-
-        status = tx_event_flags_get(&event_flags_0, 0x1, TX_OR_CLEAR,
-                                                &actual_flags, TX_WAIT_FOREVER);
-
-        if ((status != TX_SUCCESS) || (actual_flags != 0x1))
-            break;
-
-        status = tx_event_flags_get(&event_flags_1, 0x4, TX_OR_CLEAR,
-                                                &actual_flags, TX_WAIT_FOREVER);
-        if (status != TX_SUCCESS)
-            break;
     }
 }
 

@@ -305,6 +305,39 @@ See LICENSE file for details.
 
 ## Changelog
 
+### v0.8.0 - 2026-07-19
+
+**RTOS运行时数据准确性增强 + ThreadX堆栈使用率修复**
+
+1. **ThreadX堆栈使用率计算修复**
+   - 修正字段名称：`tx_thread_stack_current` → `tx_thread_stack_ptr`
+   - ThreadX堆栈向上增长，使用率计算：`(stack_current - stack_start) / stack_size * 100`
+   - 当 `stack_highest_ptr` 未初始化（0）时，使用 `stack_current` 计算
+
+2. **ThreadX信号量计数平衡**
+   - 修改测试固件：`thread_1` 添加 `tx_thread_sleep(1)` 避免无限循环发送
+   - `thread_3/4` 添加 `tx_semaphore_put` 释放信号量，保持计数平衡
+   - 信号量计数从 ~494万 降至 1-2，符合预期
+
+3. **ThreadX `_tx_thread_current_ptr` 为 NULL 问题修复**
+   - 根本原因：所有线程都阻塞时，调度器在循环中等待，`_tx_thread_current_ptr` 未设置
+   - 解决方案：
+     - 固件添加 `dump_ready` 标志，线程启动后设置
+     - QEMU runner 添加 `wait_symbol` 配置，等待标志后再 dump
+     - `thread_5` 改为不阻塞的线程（纯计数循环），确保始终有可执行线程
+
+4. **QEMU Runner 等待机制增强**
+   - 新增 `wait_symbol_addr` 参数，支持等待固件中的同步标志
+   - Profile YAML 添加 `wait_symbol` 配置项
+   - 在 dump 前循环检查标志，超时时间 5 秒
+
+5. **ThreadX插件任务状态修正**
+   - 当 `_tx_thread_current_ptr` 为 NULL 时，从 `_tx_thread_priority_list` ready list 中查找 TX_READY 状态的线程
+
+**测试结果**：45 个测试全部通过
+
+---
+
 ### v0.7.0 - 2026-07-19
 
 **架构重构 + 目录结构优化**

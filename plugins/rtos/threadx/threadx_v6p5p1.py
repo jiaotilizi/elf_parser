@@ -43,13 +43,36 @@ class ThreadXV6Plugin(RTOSPlugin):
         ]
     
     def get_tasks(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return self._walk_created_list(
+        tasks = self._walk_created_list(
             '_tx_thread_created_ptr',
             'TX_THREAD',
             'tx_thread_created_next',
             self._parse_thread,
             context
         )
+        
+        elf_parser = context['elf_parser']
+        dump_reader = context['dump_reader']
+        
+        current_ptr_sym = elf_parser.get_symbol_by_name('_tx_thread_current_ptr')
+        if current_ptr_sym:
+            current_ptr_value = dump_reader.read_uint32(current_ptr_sym['address'])
+            if current_ptr_value == 0:
+                ready_list_sym = elf_parser.get_symbol_by_name('_tx_thread_ready_list')
+                if ready_list_sym:
+                    ready_list_addr = ready_list_sym['address']
+                    for priority in range(32):
+                        head_addr = ready_list_addr + priority * 4
+                        head = dump_reader.read_uint32(head_addr)
+                        if head != 0:
+                            for task in tasks:
+                                if task['address'] == head:
+                                    task['state'] = 0
+                                    task['state_name'] = 'TX_READY'
+                                    break
+                            break
+        
+        return tasks
     
     def _parse_thread(self, thread_addr: int, thread_struct: Dict[str, Any], 
                      elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
@@ -126,11 +149,11 @@ class ThreadXV6Plugin(RTOSPlugin):
             elif member_name == 'tx_thread_stack_size':
                 result['stack_size'] = dump_reader.read_uint32(thread_addr + member_offset)
             
-            elif member_name == 'tx_thread_stack_current':
+            elif member_name == 'tx_thread_stack_ptr':
                 result['stack_current'] = dump_reader.read_pointer_or_zero(thread_addr + member_offset, is_32bit)
             
-            elif member_name == 'tx_thread_stack_high_water':
-                result['stack_high_water'] = dump_reader.read_uint32(thread_addr + member_offset)
+            elif member_name == 'tx_thread_stack_highest_ptr':
+                result['stack_highest_ptr'] = dump_reader.read_pointer_or_zero(thread_addr + member_offset, is_32bit)
             
             elif member_name == 'tx_thread_entry':
                 result['entry_point'] = dump_reader.read_pointer_or_zero(thread_addr + member_offset, is_32bit)
@@ -148,7 +171,12 @@ class ThreadXV6Plugin(RTOSPlugin):
                 result['timeout_param'] = dump_reader.read_pointer_or_zero(thread_addr + member_offset, is_32bit)
         
         if result['stack_start'] and result['stack_size']:
-            result['stack_usage'] = (result['stack_size'] - result['stack_high_water']) / result['stack_size'] * 100
+            if result['stack_highest_ptr'] and result['stack_highest_ptr'] != 0:
+                result['stack_usage'] = (result['stack_highest_ptr'] - result['stack_start']) / result['stack_size'] * 100
+            elif result['stack_current']:
+                result['stack_usage'] = (result['stack_current'] - result['stack_start']) / result['stack_size'] * 100
+            else:
+                result['stack_usage'] = 0.0
         
         if result['entry_point']:
             func_info = elf_parser.find_function_by_address(result['entry_point'])
@@ -199,9 +227,7 @@ class ThreadXV6Plugin(RTOSPlugin):
             
             elif member_name == 'tx_semaphore_count':
                 result['count'] = dump_reader.read_uint32(sem_addr + member_offset)
-            
-            elif member_name == 'tx_semaphore_max_count':
-                result['max_count'] = dump_reader.read_uint32(sem_addr + member_offset)
+                result['max_count'] = 0
             
             elif member_name == 'tx_semaphore_suspended_count':
                 result['suspended_count'] = dump_reader.read_uint32(sem_addr + member_offset)
@@ -315,16 +341,16 @@ class ThreadXV6Plugin(RTOSPlugin):
                                 name = elf_data.decode('latin-1')
                     result['name'] = name or ''
             
-            elif member_name == 'tx_queue_messages_count':
+            elif member_name == 'tx_queue_enqueued':
                 result['enqueued_count'] = dump_reader.read_uint32(queue_addr + member_offset)
             
-            elif member_name == 'tx_queue_messages_max':
+            elif member_name == 'tx_queue_capacity':
                 result['max_entries'] = dump_reader.read_uint32(queue_addr + member_offset)
             
             elif member_name == 'tx_queue_message_size':
                 result['message_size'] = dump_reader.read_uint32(queue_addr + member_offset)
             
-            elif member_name == 'tx_queue_enqueue_suspended_count':
+            elif member_name == 'tx_queue_suspended_count':
                 result['suspended_count'] = dump_reader.read_uint32(queue_addr + member_offset)
         
         return result
@@ -479,7 +505,7 @@ class ThreadXV6Plugin(RTOSPlugin):
                                 name = elf_data.decode('latin-1')
                     result['name'] = name or ''
             
-            elif member_name == 'tx_block_pool_total_blocks':
+            elif member_name == 'tx_block_pool_total':
                 result['total_blocks'] = dump_reader.read_uint32(pool_addr + member_offset)
             
             elif member_name == 'tx_block_pool_available':
@@ -531,7 +557,7 @@ class ThreadXV6Plugin(RTOSPlugin):
                                 name = elf_data.decode('latin-1')
                     result['name'] = name or ''
             
-            elif member_name == 'tx_byte_pool_total_bytes':
+            elif member_name == 'tx_byte_pool_size':
                 result['total_bytes'] = dump_reader.read_uint32(pool_addr + member_offset)
             
             elif member_name == 'tx_byte_pool_available':
@@ -539,9 +565,6 @@ class ThreadXV6Plugin(RTOSPlugin):
             
             elif member_name == 'tx_byte_pool_fragments':
                 result['fragments'] = dump_reader.read_uint32(pool_addr + member_offset)
-            
-            elif member_name == 'tx_byte_pool_largest_available':
-                result['largest_available'] = dump_reader.read_uint32(pool_addr + member_offset)
         
         if result['total_bytes'] > 0:
             result['usage_percent'] = (result['total_bytes'] - result['available_bytes']) / result['total_bytes'] * 100

@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, List, Optional, Any, Callable
-from core.plugin_manager import OSPlugin
+from plugins.base import OSPlugin
 
 logger = logging.getLogger(__name__)
 

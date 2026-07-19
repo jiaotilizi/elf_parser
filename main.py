@@ -7,7 +7,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.elf_parser import ELFParser
 from core.dump_reader import DumpReader
-from core.plugin_manager import PluginManager, PluginContext
 from core.profile_loader import ProfileLoader
 from display import DisplayFactory
 from display.data_adapter import DataAdapter
@@ -72,6 +71,11 @@ def analyze(elf_path: str, dump_path: str, profile_name: str) -> dict:
     if not profile:
         raise ValueError(f"Profile not found: {profile_name}")
     
+    print(f"Validating profile...")
+    validation_errors = profile_loader.validate_profile(profile)
+    if validation_errors:
+        raise ValueError(f"Profile validation failed: {'; '.join(validation_errors)}")
+    
     print(f"Loading ELF: {elf_path}")
     elf_parser = ELFParser(elf_path)
     
@@ -79,41 +83,65 @@ def analyze(elf_path: str, dump_path: str, profile_name: str) -> dict:
     memory_regions = profile_loader.get_memory_regions(profile)
     dump_reader = DumpReader(dump_path, memory_regions)
     
-    print(f"Discovering plugins...")
-    plugin_manager = PluginManager()
-    plugin_manager.discover_plugins()
+    keywords = profile.get('keyword', [])
+    if keywords:
+        print(f"Running keyword matching for profile: {', '.join(keywords)}")
+        
+        elf_unmatched = elf_parser.match_keywords(keywords)
+        dump_unmatched = dump_reader.match_keywords(keywords)
+        
+        all_unmatched = elf_unmatched + dump_unmatched
+        if all_unmatched:
+            print(f"Keyword match failed:")
+            if elf_unmatched:
+                print(f"  ELF unmatched: {', '.join(elf_unmatched)}")
+            if dump_unmatched:
+                print(f"  Dump unmatched: {', '.join(dump_unmatched)}")
+            raise ValueError(f"Profile/ELF/Dump mismatch: {len(all_unmatched)} keywords not found")
     
     print(f"Loading plugins from profile...")
-    plugins = plugin_manager.load_plugins_from_profile(profile)
+    plugins = profile_loader.load_plugins_from_profile(profile)
     
-    context = PluginContext()
-    context.set_elf_parser(elf_parser)
-    context.set_dump_reader(dump_reader)
-    context.set_profile(profile)
+    context = {
+        'elf_parser': elf_parser,
+        'dump_reader': dump_reader,
+        'profile': profile,
+        'results': {},
+        'config': {},
+        'plugins': plugins,
+    }
     
     print(f"Initializing plugins...")
-    initialized_plugins = plugin_manager.initialize_plugins(plugins, context.__dict__)
+    for plugin in plugins:
+        plugin.initialize(context)
     
     print(f"Executing plugins...")
-    plugin_results = plugin_manager.execute_plugins(initialized_plugins, context.__dict__)
+    plugin_results = {}
+    for plugin in plugins:
+        try:
+            result = plugin.execute(context)
+            if result:
+                plugin_results[plugin.name] = result
+        except Exception as e:
+            print(f"Error executing plugin {plugin.name}: {e}")
+            plugin_results[plugin.name] = {'error': str(e)}
+    
+    context['results'] = plugin_results
     
     return {
         'elf_parser': elf_parser,
         'dump_reader': dump_reader,
         'profile': profile,
-        'plugins': [p.name for p in initialized_plugins],
+        'plugins': [p.name for p in plugins],
         'results': plugin_results,
-        'plugin_manager': plugin_manager,
-        'context': context.__dict__,
+        'context': context,
     }
 
 
 def show_display(scheme: str, results: dict):
     profile = results['profile']
-    plugin_manager = results['plugin_manager']
-    context = results['context']
     
-    data_adapter = DataAdapter(plugin_manager, context)
+    data_adapter = DataAdapter(results['context'])
     
     display = DisplayFactory.create(scheme, profile, data_adapter)
     display.run()
@@ -125,21 +153,47 @@ def list_profiles():
     
     print("Available profiles:")
     for p in profiles:
-        print(f"  - {p['name']}: {p['chip']} ({p['os']} {p['os_version']})")
+        print(f"  - {p['name']}: {p['chip']}")
 
 
 def list_plugins():
-    plugin_manager = PluginManager()
-    plugin_manager.discover_plugins()
-    plugins = plugin_manager.list_all_plugins()
+    from plugins.base import Plugin
+    import importlib
+    import os
     
-    print("OS Plugins:")
-    for p in plugins['os']:
-        print(f"  - {p['name']}: {p['os_name']} {p['os_version']}")
+    plugin_dirs = ['rtos', 'module']
+    plugins = []
     
-    print("\nModule Plugins:")
-    for p in plugins['module']:
-        print(f"  - {p['name']}: {p['module_type']}")
+    for plugin_dir in plugin_dirs:
+        full_dir = os.path.join(os.path.dirname(__file__), 'plugins', plugin_dir)
+        if not os.path.exists(full_dir):
+            continue
+        
+        for subdir in os.listdir(full_dir):
+            subdir_path = os.path.join(full_dir, subdir)
+            if not os.path.isdir(subdir_path):
+                continue
+            
+            for filename in os.listdir(subdir_path):
+                if filename.endswith('.py') and not filename.startswith('_'):
+                    module_path = f"plugins.{plugin_dir}.{subdir}.{filename[:-3]}"
+                    try:
+                        module = importlib.import_module(module_path)
+                        for attr_name in dir(module):
+                            attr = getattr(module, attr_name)
+                            if isinstance(attr, type) and issubclass(attr, Plugin) and attr != Plugin:
+                                if attr.__name__ in ('OSPlugin', 'RTOSPlugin', 'ModulePlugin', 'Plugin'):
+                                    continue
+                                plugins.append({
+                                    'path': module_path.replace('plugins.', ''),
+                                    'name': attr_name,
+                                })
+                    except Exception:
+                        pass
+    
+    print("Available plugins:")
+    for p in plugins:
+        print(f"  - {p['path']}")
 
 
 def dump_struct(elf_parser, dump_reader, struct_name: str):
@@ -197,15 +251,13 @@ def output_results(results: dict, output_file: str = None):
     display_config = profile.get('display', {}).get('scheme', 'cli_basic')
     
     if not output_file:
-        data_adapter = DataAdapter(results['plugin_manager'], results['context'])
+        data_adapter = DataAdapter(results['context'])
         display = DisplayFactory.create(display_config, profile, data_adapter)
         display.run()
         return
     
     output = {
         'profile': profile.get('chip', {}).get('name', 'unknown'),
-        'os': profile.get('os', {}).get('name', 'unknown'),
-        'os_version': profile.get('os', {}).get('version', 'unknown'),
         'plugins': results['plugins'],
         'analysis': results['results'],
     }

@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from display.base import ResourceMetadata
 from display.data_adapter import DataAdapter
-from core.plugin_manager import PluginManager, OSPlugin
+from plugins.base import OSPlugin, ModulePlugin
 from typing import Dict, List, Any, Optional
 
 
@@ -57,48 +57,58 @@ class TestResourceMetadata(unittest.TestCase):
 
 class TestDataAdapter(unittest.TestCase):
     def setUp(self):
-        self.pm = PluginManager()
-        self.pm._register_plugin(MockOSPlugin())
+        mock_plugin = MockOSPlugin()
+        
         self.context = {
-            'profile': {
-                'os': {'name': 'mock', 'version': 'v1p0p0'},
+            'profile': {},
+            'plugins': [mock_plugin],
+            'results': {
+                'mock_os': {
+                    'tasks': [
+                        {'address': 0x1000, 'name': 'task1', 'state': 0, 'priority': 1},
+                        {'address': 0x2000, 'name': 'task2', 'state': 1, 'priority': 2},
+                    ],
+                    'mutexes': [
+                        {'address': 0x3000, 'name': 'mutex1', 'owner': 0},
+                    ],
+                }
             }
         }
     
     def test_get_all_resource_types(self):
-        adapter = DataAdapter(self.pm, self.context)
+        adapter = DataAdapter(self.context)
         types = adapter.get_all_resource_types()
         self.assertIn('tasks', types)
         self.assertIn('mutexes', types)
     
     def test_get_resource_data(self):
-        adapter = DataAdapter(self.pm, self.context)
+        adapter = DataAdapter(self.context)
         tasks = adapter.get_resource_data('tasks')
         self.assertEqual(len(tasks), 2)
         self.assertEqual(tasks[0]['name'], 'task1')
     
     def test_get_resource_metadata(self):
-        adapter = DataAdapter(self.pm, self.context)
+        adapter = DataAdapter(self.context)
         meta = adapter.get_resource_metadata('tasks')
         self.assertIsNotNone(meta)
         self.assertEqual(meta.resource_type, 'tasks')
         self.assertEqual(meta.label, 'Tasks')
     
     def test_get_detail(self):
-        adapter = DataAdapter(self.pm, self.context)
+        adapter = DataAdapter(self.context)
         detail = adapter.get_detail('tasks', 0x1000)
         self.assertIsNotNone(detail)
         self.assertEqual(detail['address'], 0x1000)
     
     def test_refresh_all(self):
-        adapter = DataAdapter(self.pm, self.context)
+        adapter = DataAdapter(self.context)
         _ = adapter.get_resource_data('tasks')
         self.assertTrue(adapter.is_cache_valid())
         adapter.refresh()
         self.assertFalse(adapter.is_cache_valid())
     
     def test_refresh_single(self):
-        adapter = DataAdapter(self.pm, self.context)
+        adapter = DataAdapter(self.context)
         _ = adapter.get_resource_data('tasks')
         _ = adapter.get_resource_data('mutexes')
         adapter.refresh('tasks')
@@ -106,7 +116,7 @@ class TestDataAdapter(unittest.TestCase):
         self.assertIn('mutexes', adapter._cached_data)
     
     def test_cache_ttl(self):
-        adapter = DataAdapter(self.pm, self.context, cache_ttl=0)
+        adapter = DataAdapter(self.context, cache_ttl=0)
         _ = adapter.get_resource_data('tasks')
         self.assertFalse(adapter.is_cache_valid())
 

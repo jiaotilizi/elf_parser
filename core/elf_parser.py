@@ -21,7 +21,8 @@ class ELFParser:
         self._is_32bit = False
         self._address_size = 4
         
-        self._elf_segments: List[Dict[str, Any]] = []
+        self._segment_cache: List[Dict[str, Any]] = []
+        self._elf_header_info: Dict[str, Any] = {}
         
         self._dwarf_version: str = 'unknown'
         self._compiler_name: str = 'unknown'
@@ -36,14 +37,24 @@ class ELFParser:
             self._is_32bit = self.elffile.elfclass == 32
             self._address_size = 4 if self._is_32bit else 8
             
+            self._elf_header_info = {
+                'class': self.elffile.elfclass,
+                'machine': self.elffile.get_machine_arch(),
+                'entry': self.elffile.header['e_entry'],
+                'num_sections': self.elffile.num_sections(),
+                'num_segments': self.elffile.num_segments(),
+            }
+            
             for seg in self.elffile.iter_segments():
                 if seg['p_type'] == 'PT_LOAD':
                     seg_vaddr = seg['p_vaddr']
                     seg_filesz = seg['p_filesz']
+                    seg_memsz = seg['p_memsz']
                     seg_data = seg.data()
-                    self._elf_segments.append({
+                    self._segment_cache.append({
                         'vaddr': seg_vaddr,
                         'filesz': seg_filesz,
+                        'memsz': seg_memsz,
                         'data': seg_data,
                     })
             
@@ -800,33 +811,29 @@ class ELFParser:
     def get_struct_type(self, struct_name: str) -> Optional[Dict[str, Any]]:
         return self._struct_type_cache.get(struct_name)
 
-    def read_memory_from_dump_segments(self, address: int, size: int, dump_data: bytes) -> Optional[bytes]:
-        for seg in self.elffile.iter_segments():
-            if seg['p_type'] == 'PT_LOAD':
-                seg_vaddr = seg['p_vaddr']
-                seg_memsz = seg['p_memsz']
-
-                if seg_vaddr <= address < seg_vaddr + seg_memsz:
-                    dump_offset = address - seg_vaddr
-                    if dump_offset + size <= len(dump_data):
-                        return dump_data[dump_offset:dump_offset + size]
+    def _find_segment_for_address(self, address: int, size: int = 0) -> Optional[Dict[str, Any]]:
+        for seg in self._segment_cache:
+            seg_vaddr = seg['vaddr']
+            seg_memsz = seg['memsz']
+            if seg_vaddr <= address < seg_vaddr + seg_memsz:
+                return seg
         return None
     
     def read_memory_from_dump(self, address: int, size: int, dump_data: bytes) -> Optional[bytes]:
-        return self.read_memory_from_dump_segments(address, size, dump_data)
+        seg = self._find_segment_for_address(address, size)
+        if seg:
+            dump_offset = address - seg['vaddr']
+            if dump_offset + size <= len(dump_data):
+                return dump_data[dump_offset:dump_offset + size]
+        return None
     
     def read_memory_from_elf(self, address: int, size: int) -> Optional[bytes]:
-        for seg in self._elf_segments:
-            seg_vaddr = seg['vaddr']
-            seg_filesz = seg['filesz']
-            seg_data = seg['data']
-            
-            if seg_vaddr <= address < seg_vaddr + seg_filesz:
-                file_offset = address - seg_vaddr
-                actual_size = min(size, len(seg_data) - file_offset)
-                if actual_size > 0:
-                    return seg_data[file_offset:file_offset + actual_size]
-        
+        seg = self._find_segment_for_address(address, size)
+        if seg:
+            file_offset = address - seg['vaddr']
+            actual_size = min(size, seg['filesz'] - file_offset)
+            if actual_size > 0:
+                return seg['data'][file_offset:file_offset + actual_size]
         return None
     
     def parse_struct_from_dump(self, struct_name: str, address: int, dump_data: bytes) -> Optional[Dict[str, Any]]:
@@ -877,16 +884,22 @@ class ELFParser:
             return int.from_bytes(data, byteorder='little')
 
     def get_elf_header(self) -> Dict[str, Any]:
-        return {
-            'class': self.elffile.elfclass,
-            'machine': self.elffile.get_machine_arch(),
-            'entry': self.elffile.header['e_entry'],
-            'num_sections': self.elffile.num_sections(),
-            'num_segments': self.elffile.num_segments(),
-        }
+        return self._elf_header_info
     
     def is_32bit(self) -> bool:
         return self._is_32bit
     
     def get_address_size(self) -> int:
         return self._address_size
+    
+    def match_keywords(self, keywords: List[str], check_elf_only: bool = False) -> List[str]:
+        unmatched = []
+        
+        with open(self.elf_path, 'rb') as f:
+            elf_text = f.read().decode('ascii', errors='ignore').lower()
+        
+        for keyword in keywords:
+            if keyword.lower() not in elf_text:
+                unmatched.append(keyword)
+        
+        return unmatched

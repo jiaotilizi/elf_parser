@@ -2,10 +2,6 @@ chip:
   name: S6
   vendor: unisoc
   description: Unisoc S6 chip
-os:
-  name: freertos
-  version: v11p3p0
-  description: FreeRTOS 11.0
 memory:
 - name: ram
   start_addr: 1610612736
@@ -13,12 +9,14 @@ memory:
 - name: iram
   start_addr: 0
   size: 524288
-modules:
-- assert_info
-- test_point
 display:
   scheme: cli_table
   options:
     show_hex: true
     show_address: true
     max_rows: 100
+plugins:
+- module.assert_info.assert_info_v0
+keyword:
+- S6
+- unisoc

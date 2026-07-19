@@ -117,6 +117,7 @@ class QemuRunner:
         run_seconds: float = 2.0,
         extra_args: Optional[List[str]] = None,
         qmp_socket: Optional[str] = None,
+        wait_symbol_addr: Optional[int] = None,
     ):
         self.qemu_binary = qemu_binary
         self.machine = machine
@@ -129,6 +130,7 @@ class QemuRunner:
         self.run_seconds = run_seconds
         self.extra_args = extra_args or []
         self.qmp_socket = qmp_socket or '/tmp/qemu-qmp.sock'
+        self.wait_symbol_addr = wait_symbol_addr
 
     # ── 命令构造 ──────────────────────────────────────────────
     def build_qemu_cmd(self) -> List[str]:
@@ -260,6 +262,28 @@ class QemuRunner:
                 print(f"  运行 : 等待 {self.run_seconds}s ...")
             time.sleep(self.run_seconds)
 
+            # 如果配置了等待标志，循环检查直到标志变为非零
+            if hasattr(self, 'wait_symbol_addr') and self.wait_symbol_addr is not None:
+                if verbose:
+                    print(f"  等待 : 检查地址 0x{self.wait_symbol_addr:x} ...")
+                for _ in range(50):
+                    result = qmp.execute("pmemsave", {
+                        "val": self.wait_symbol_addr,
+                        "size": 4,
+                        "filename": "/tmp/qemu_wait_check.bin"
+                    })
+                    if 'error' not in result:
+                        with open('/tmp/qemu_wait_check.bin', 'rb') as f:
+                            val = int.from_bytes(f.read(4), 'little')
+                            if val != 0:
+                                if verbose:
+                                    print(f"  等待 : 标志已设置 (0x{val:x})")
+                                break
+                    time.sleep(0.1)
+                else:
+                    if verbose:
+                        print(f"  等待 : 超时，继续执行")
+
             # 暂停 VM
             qmp.execute("stop")
             if verbose:
@@ -358,6 +382,19 @@ def runner_from_profile(
     ram_base_str = str(qemu_cfg.get('ram_base', '0x20000000'))
     ram_base = int(ram_base_str, 0) if ram_base_str.startswith('0x') else int(ram_base_str)
 
+    wait_symbol = qemu_cfg.get('wait_symbol')
+    wait_symbol_addr = None
+    if wait_symbol:
+        try:
+            from core.elf_parser import ELFParser
+            elf_parser = ELFParser(elf_path)
+            sym = elf_parser.get_symbol_by_name(wait_symbol)
+            if sym:
+                wait_symbol_addr = sym['address']
+                print(f"  等待符号: {wait_symbol} @ 0x{wait_symbol_addr:x}")
+        except Exception as e:
+            print(f"  警告: 无法获取等待符号地址: {e}")
+
     return QemuRunner(
         qemu_binary=qemu_cfg.get('binary', 'qemu-system-arm'),
         machine=qemu_cfg['machine'],
@@ -369,4 +406,5 @@ def runner_from_profile(
         ram_size=int(qemu_cfg.get('ram_size', 4096)),
         run_seconds=float(qemu_cfg.get('run_seconds', 2.0)),
         extra_args=qemu_cfg.get('extra_args', []),
+        wait_symbol_addr=wait_symbol_addr,
     )
