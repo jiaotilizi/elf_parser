@@ -27,7 +27,7 @@ modules:
 plugins:
 - rtos/freertos
 display:
-  scheme: cli_interactive
+  scheme: cli_table
   options:
     show_hex: true
     show_address: true

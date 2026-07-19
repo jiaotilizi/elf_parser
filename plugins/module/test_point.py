@@ -252,7 +252,10 @@ class TestPointPlugin(ModulePlugin):
         if not self._context:
             return None
         
-        if resource_type == 'test_point':
+        from plugins import normalize_resource_type
+        resource_type = normalize_resource_type(resource_type)
+        
+        if resource_type == 'test_points':
             test_points = self.parse_test_points(self._context)
             for tp in test_points:
                 if tp.get('address') == address:

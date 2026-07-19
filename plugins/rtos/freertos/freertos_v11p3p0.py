@@ -169,17 +169,17 @@ class FreeRTOSV11Plugin(OSPlugin):
                 result['priority'] = dump_reader.read_uint32(tcb_addr + member_offset)
             
             elif member_name == 'pxStack':
-                result['stack_start'] = dump_reader.read_pointer(tcb_addr + member_offset, is_32bit) or 0
+                result['stack_start'] = dump_reader.read_pointer_or_zero(tcb_addr + member_offset, is_32bit)
             
             elif member_name == 'pxEndOfStack':
-                result['stack_end'] = dump_reader.read_pointer(tcb_addr + member_offset, is_32bit) or 0
+                result['stack_end'] = dump_reader.read_pointer_or_zero(tcb_addr + member_offset, is_32bit)
             
             elif member_name == 'pxTopOfStack':
                 top_of_stack = dump_reader.read_pointer(tcb_addr + member_offset, is_32bit)
                 if top_of_stack:
                     result['current_sp'] = top_of_stack
                     pc_offset = 0
-                    result['current_pc'] = dump_reader.read_pointer(top_of_stack + pc_offset, is_32bit) or 0
+                    result['current_pc'] = dump_reader.read_pointer_or_zero(top_of_stack + pc_offset, is_32bit)
         
         if result['stack_start'] and result['stack_end']:
             stack_size = abs(result['stack_start'] - result['stack_end'])
@@ -333,7 +333,7 @@ class FreeRTOSV11Plugin(OSPlugin):
                     result['name'] = dump_reader.read_string(name_addr, 16) or ''
             
             elif member_name == 'pxMutexHolder':
-                result['owner'] = dump_reader.read_pointer(mutex_addr + member_offset, is_32bit) or 0
+                result['owner'] = dump_reader.read_pointer_or_zero(mutex_addr + member_offset, is_32bit)
             
             elif member_name == 'uxMessagesWaiting':
                 result['count'] = dump_reader.read_uint32(mutex_addr + member_offset)

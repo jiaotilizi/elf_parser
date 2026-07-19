@@ -117,10 +117,25 @@ class DumpReader:
         return None
     
     def read_pointer(self, address: int, is_32bit: bool = True) -> Optional[int]:
+        """读取指针值，地址不可读时返回 None（与 0/NULL 区分）。"""
         if is_32bit:
             return self.read_uint32(address)
         else:
             return self.read_uint64(address)
+    
+    def read_pointer_or_zero(self, address: int, is_32bit: bool = True) -> int:
+        """读取指针值，地址不可读时返回 0（用于需要 int 类型的场景）。
+        
+        与 read_pointer 的区别：
+          - read_pointer 返回 Optional[int]，None 表示"读不到"
+          - read_pointer_or_zero 返回 int，0 表示"读不到或 NULL 指针"
+          
+        调用方应根据语义选择：
+          - 需要区分 NULL 和"读不到"：使用 read_pointer，自己处理 None
+          - 不区分或需要 int 类型（如 JSON 输出）：使用 read_pointer_or_zero
+        """
+        ptr = self.read_pointer(address, is_32bit)
+        return ptr if ptr is not None else 0
 
     def read_pointer_by_size(self, address: int, byte_size: int = 4) -> Optional[int]:
         """按指针字节大小读指针值（4 或 8 字节），用于解析器跨架构泛用。"""

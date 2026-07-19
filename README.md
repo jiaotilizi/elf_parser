@@ -305,6 +305,52 @@ See LICENSE file for details.
 
 ## Changelog
 
+### v0.5.0 - 2026-07-19
+
+**P0/P1 关键缺陷修复 + 架构优化**
+
+1. **统一 `os.version` 格式**
+   - 所有 profile 的 `os.version` 统一为 `vMAJORpMINORpPATCH` 格式
+   - 修复 `nxp/demo_chip.yaml` (`5p6` → `v5p6p0`) 和 `unisoc/S6.yaml` (`11p0` → `v11p3p0`)
+   - 更新测试断言以匹配新格式
+
+2. **修复 `read_pointer` 返回值歧义**
+   - `read_pointer` 返回 `None`（不可读）和 `0`（有效 NULL 指针）语义混淆
+   - 新增 `read_pointer_or_zero()` 方法：不可读时返回 `0`，用于需要整数的场景
+   - 替换所有插件中的 `read_pointer(...) or 0` 写法
+
+3. **CLI 显示层重构**
+   - `cli_interactive.py` 重命名为 `cli_table.py`（无真实交互功能）
+   - 更新类名 `CliInteractiveDisplay` → `CliTableDisplay`
+   - 更新所有 profile 的 display scheme 引用
+
+4. **资源类型标准化**
+   - 新增 `ResourceType` 枚举和 `normalize_resource_type()` 函数
+   - 统一资源类型命名为复数形式（`task` → `tasks`）
+   - 修复 DataAdapter 和插件间的类型名称不一致问题
+
+5. **ThreadX 插件代码去重**
+   - 在 `OSPlugin` 基类中抽取 `_walk_created_list()` 公共方法
+   - ThreadX 插件从 943 行减少到 662 行（约减少 30%）
+   - 消除 tasks/mutexes/semaphores/queues/events/timers/block_pools/byte_pools 的列表遍历重复代码
+
+6. **DataAdapter 缓存机制增强**
+   - 新增 `cache_ttl` 参数（默认 30 秒）
+   - 支持按资源类型部分刷新 `refresh(resource_type)`
+   - 新增 `is_cache_valid()` 方法检查缓存有效性
+
+7. **新增 display 单元测试**
+   - 覆盖 `ResourceMetadata` 构造和字段设置
+   - 覆盖 `DataAdapter` 的数据获取、元数据、详情查询、缓存刷新功能
+
+8. **项目配置完善**
+   - 创建 `pyproject.toml`：定义项目元数据、依赖、入口点
+   - 更新 `.gitignore`：添加 Python 虚拟环境、IDE 文件、系统文件忽略规则
+
+**测试结果**：150 个测试通过（1 个跳过）
+
+---
+
 ### v0.4.0 - 2026-07-19
 
 **裸机测试固件全面补齐 + 单元测试覆盖率提升**

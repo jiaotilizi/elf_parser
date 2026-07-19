@@ -108,11 +108,13 @@ class DataAdapter:
         ),
     }
 
-    def __init__(self, plugin_manager, context: Dict[str, Any]):
+    def __init__(self, plugin_manager, context: Dict[str, Any], cache_ttl: int = 30):
         self.plugin_manager = plugin_manager
         self.context = context
         self._cached_data = {}
         self._metadata_cache = {}
+        self._cache_timestamp = 0
+        self._cache_ttl = cache_ttl
     
     def _get_os_plugin(self):
         profile = self.context.get('profile', {})
@@ -136,7 +138,9 @@ class DataAdapter:
         return self.plugin_manager.module_plugins.get('test_point')
     
     def _load_all_data(self):
-        if self._cached_data:
+        import time
+        now = time.time()
+        if self._cached_data and (now - self._cache_timestamp) < self._cache_ttl:
             return
         
         os_plugin = self._get_os_plugin()
@@ -159,6 +163,9 @@ class DataAdapter:
                     self._cached_data['trace_buffer'] = tp_data['trace_buffer']
             except Exception as e:
                 print(f"Error getting test point data: {e}")
+        
+        import time
+        self._cache_timestamp = time.time()
     
     def get_all_resource_types(self) -> List[str]:
         self._load_all_data()
@@ -207,6 +214,14 @@ class DataAdapter:
         
         return None
     
-    def refresh(self):
-        self._cached_data = {}
-        self._metadata_cache = {}
+    def refresh(self, resource_type: str = None):
+        if resource_type:
+            self._cached_data.pop(resource_type, None)
+        else:
+            self._cached_data = {}
+            self._metadata_cache = {}
+        self._cache_timestamp = 0
+    
+    def is_cache_valid(self) -> bool:
+        import time
+        return self._cached_data and (time.time() - self._cache_timestamp) < self._cache_ttl

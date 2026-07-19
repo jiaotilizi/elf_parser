@@ -112,19 +112,19 @@ class ThreadXV5Plugin(OSPlugin):
                 result['priority'] = dump_reader.read_uint32(thread_addr + member_offset)
             
             elif member_name == 'tx_thread_stack_start':
-                result['stack_start'] = dump_reader.read_pointer(thread_addr + member_offset, is_32bit) or 0
+                result['stack_start'] = dump_reader.read_pointer_or_zero(thread_addr + member_offset, is_32bit)
             
             elif member_name == 'tx_thread_stack_size':
                 result['stack_size'] = dump_reader.read_uint32(thread_addr + member_offset)
             
             elif member_name == 'tx_thread_stack_current':
-                result['stack_current'] = dump_reader.read_pointer(thread_addr + member_offset, is_32bit) or 0
+                result['stack_current'] = dump_reader.read_pointer_or_zero(thread_addr + member_offset, is_32bit)
             
             elif member_name == 'tx_thread_stack_high_water':
                 result['stack_high_water'] = dump_reader.read_uint32(thread_addr + member_offset)
             
             elif member_name == 'tx_thread_entry':
-                result['entry_point'] = dump_reader.read_pointer(thread_addr + member_offset, is_32bit) or 0
+                result['entry_point'] = dump_reader.read_pointer_or_zero(thread_addr + member_offset, is_32bit)
         
         if result['stack_start'] and result['stack_size']:
             result['stack_usage'] = (result['stack_size'] - result['stack_high_water']) / result['stack_size'] * 100
@@ -274,7 +274,7 @@ class ThreadXV5Plugin(OSPlugin):
                     result['name'] = dump_reader.read_string(name_addr, 16) or ''
             
             elif member_name == 'tx_mutex_owner':
-                result['owner'] = dump_reader.read_pointer(mutex_addr + member_offset, is_32bit) or 0
+                result['owner'] = dump_reader.read_pointer_or_zero(mutex_addr + member_offset, is_32bit)
             
             elif member_name == 'tx_mutex_inherit_count':
                 result['inherit_count'] = dump_reader.read_uint32(mutex_addr + member_offset)

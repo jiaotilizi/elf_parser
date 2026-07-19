@@ -3,7 +3,7 @@ from typing import Dict, List, Any
 import re
 
 
-class CliInteractiveDisplay(DisplayBase):
+class CliTableDisplay(DisplayBase):
     def __init__(self, profile: Dict[str, Any], data_adapter=None):
         super().__init__(profile, data_adapter)
         self.show_hex = self.options.get('show_hex', True)

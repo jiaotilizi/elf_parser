@@ -128,7 +128,7 @@ class TestProfileLoader(unittest.TestCase):
         self.assertIsNotNone(profile)
         self.assertEqual(profile['chip']['name'], 'demo_chip')
         self.assertEqual(profile['os']['name'], 'threadx')
-        self.assertEqual(profile['os']['version'], '5p6')
+        self.assertEqual(profile['os']['version'], 'v5p6p0')
 
     def test_load_bss_simulated_profile(self):
         loader = ProfileLoader()

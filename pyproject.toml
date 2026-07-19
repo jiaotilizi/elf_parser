@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "elf_parser"
+version = "0.5.0"
+description = "A Python-based tool for analyzing embedded firmware by parsing ELF files and memory dumps"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [{name = "elf_parser team"}]
+license = "MIT"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Embedded Systems",
+    "Topic :: Software Development :: Debuggers",
+]
+
+[project.scripts]
+elf_parser = "main:main"
+
+[project.dependencies]
+pyelftools = ">=0.28"
+pyyaml = ">=6.0"
+
+[project.optional-dependencies]
+web = ["flask>=2.0"]
+dev = ["pytest>=7.0", "pytest-cov>=4.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core", "plugins", "display", "tests", "profiles"]
+exclude = ["tests/rtos"]

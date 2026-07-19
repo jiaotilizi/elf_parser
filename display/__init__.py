@@ -7,9 +7,9 @@ class DisplayFactory:
         if scheme == 'cli_basic':
             from .cli_basic import CliBasicDisplay
             return CliBasicDisplay(profile, data_adapter)
-        elif scheme == 'cli_interactive':
-            from .cli_interactive import CliInteractiveDisplay
-            return CliInteractiveDisplay(profile, data_adapter)
+        elif scheme == 'cli_table' or scheme == 'cli_interactive':
+            from .cli_table import CliTableDisplay
+            return CliTableDisplay(profile, data_adapter)
         elif scheme == 'web_gui':
             from .web_gui import WebGuiDisplay
             return WebGuiDisplay(profile, data_adapter)
@@ -19,4 +19,4 @@ class DisplayFactory:
     
     @staticmethod
     def get_supported_schemes():
-        return ['cli_basic', 'cli_interactive', 'web_gui']
+        return ['cli_basic', 'cli_table', 'web_gui']
