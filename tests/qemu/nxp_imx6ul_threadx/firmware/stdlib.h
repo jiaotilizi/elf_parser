@@ -8,8 +8,6 @@ void free(void *ptr);
 void *calloc(size_t nmemb, size_t size);
 void *realloc(void *ptr, size_t size);
 int abs(int j);
-long int labs(long int j);
-unsigned int rand(void);
-void srand(unsigned int seed);
+long labs(long j);
 
 #endif

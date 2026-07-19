@@ -10,11 +10,13 @@ class DataAdapter:
             icon='🧵',
             primary_key='address',
             fields=[
+                {'name': 'address', 'label': 'Address', 'type': 'hex'},
                 {'name': 'name', 'label': 'Name', 'type': 'string'},
-                {'name': 'state', 'label': 'State', 'type': 'string'},
+                {'name': 'state_name', 'label': 'State', 'type': 'string'},
                 {'name': 'priority', 'label': 'Priority', 'type': 'number'},
+                {'name': 'cpu_usage', 'label': 'CPU %', 'type': 'number'},
                 {'name': 'stack_size', 'label': 'Stack Size', 'type': 'number'},
-                {'name': 'stack_used', 'label': 'Stack Used', 'type': 'number'},
+                {'name': 'stack_usage', 'label': 'Stack %', 'type': 'number'},
             ]
         ),
         'mutexes': ResourceMetadata(
@@ -23,8 +25,9 @@ class DataAdapter:
             icon='🔒',
             primary_key='address',
             fields=[
+                {'name': 'address', 'label': 'Address', 'type': 'hex'},
                 {'name': 'name', 'label': 'Name', 'type': 'string'},
-                {'name': 'owner', 'label': 'Owner', 'type': 'string'},
+                {'name': 'owner_info.name', 'label': 'Owner', 'type': 'string'},
                 {'name': 'priority', 'label': 'Priority', 'type': 'number'},
             ]
         ),
@@ -34,6 +37,7 @@ class DataAdapter:
             icon='🚦',
             primary_key='address',
             fields=[
+                {'name': 'address', 'label': 'Address', 'type': 'hex'},
                 {'name': 'name', 'label': 'Name', 'type': 'string'},
                 {'name': 'count', 'label': 'Count', 'type': 'number'},
                 {'name': 'max_count', 'label': 'Max', 'type': 'number'},
@@ -45,6 +49,7 @@ class DataAdapter:
             icon='📭',
             primary_key='address',
             fields=[
+                {'name': 'address', 'label': 'Address', 'type': 'hex'},
                 {'name': 'name', 'label': 'Name', 'type': 'string'},
                 {'name': 'messages', 'label': 'Messages', 'type': 'number'},
                 {'name': 'max_messages', 'label': 'Max', 'type': 'number'},
@@ -56,6 +61,7 @@ class DataAdapter:
             icon='🎯',
             primary_key='address',
             fields=[
+                {'name': 'address', 'label': 'Address', 'type': 'hex'},
                 {'name': 'name', 'label': 'Name', 'type': 'string'},
                 {'name': 'flags', 'label': 'Flags', 'type': 'hex'},
             ]
@@ -66,8 +72,9 @@ class DataAdapter:
             icon='⏱️',
             primary_key='address',
             fields=[
+                {'name': 'address', 'label': 'Address', 'type': 'hex'},
                 {'name': 'name', 'label': 'Name', 'type': 'string'},
-                {'name': 'state', 'label': 'State', 'type': 'string'},
+                {'name': 'state_name', 'label': 'State', 'type': 'string'},
                 {'name': 'period_ticks', 'label': 'Period', 'type': 'number'},
                 {'name': 'ticks_remaining', 'label': 'Remaining', 'type': 'number'},
             ]
@@ -78,6 +85,7 @@ class DataAdapter:
             icon='🧱',
             primary_key='address',
             fields=[
+                {'name': 'address', 'label': 'Address', 'type': 'hex'},
                 {'name': 'name', 'label': 'Name', 'type': 'string'},
                 {'name': 'available_blocks', 'label': 'Available', 'type': 'number'},
                 {'name': 'total_blocks', 'label': 'Total', 'type': 'number'},
@@ -89,6 +97,7 @@ class DataAdapter:
             icon='💧',
             primary_key='address',
             fields=[
+                {'name': 'address', 'label': 'Address', 'type': 'hex'},
                 {'name': 'name', 'label': 'Name', 'type': 'string'},
                 {'name': 'available_bytes', 'label': 'Available', 'type': 'number'},
                 {'name': 'total_bytes', 'label': 'Total', 'type': 'number'},

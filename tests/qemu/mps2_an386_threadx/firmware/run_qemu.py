@@ -24,7 +24,7 @@ def main():
     )
     ok = runner.run_and_dump()
     if ok:
-        print(f"\n  Run: python3 firmware/qemu_m4_threadx/show_parsed.py")
+        print(f"\n  Run: python3 show_parsed.py")
     return 0 if ok else 1
 
 

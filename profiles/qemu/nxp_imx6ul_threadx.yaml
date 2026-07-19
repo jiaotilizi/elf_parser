@@ -1,7 +1,7 @@
 chip:
-  name: qemu_nxp_imx6ul_freertos
+  name: qemu_nxp_imx6ul_threadx
   vendor: nxp
-  description: QEMU NXP i.MX6UL (Cortex-A7, ARMv7-A) + FreeRTOS V11.3.0
+  description: QEMU NXP i.MX6UL (Cortex-A7, ARMv7-A) + ThreadX V6.5.1
   arch: armv7-a
   cpu: cortex-a7
   bits: 32
@@ -13,13 +13,14 @@ qemu:
   ram_base: 1073741824
   ram_size: 65536
   run_seconds: 3.0
+  wait_symbol: dump_ready
 memory:
 - name: ram
   start_addr: 1073741824
   size: 65536
   offset_in_dump: 0
 plugins:
-- rtos.freertos.freertos_v11p3p0
+- rtos.threadx.threadx_v6p5p1
 - module.assert_info.assert_info_v0
 - module.test_point.test_point_v0
 display:
@@ -29,7 +30,6 @@ display:
     show_address: true
     max_rows: 50
 keyword:
-- pxReadyTasksLists
-- xQueueCreate
-- vTaskStartScheduler
-- nxp
+- thread
+- semaphore
+- queue

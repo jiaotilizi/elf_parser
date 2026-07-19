@@ -42,7 +42,7 @@ class CliBasicDisplay(DisplayBase):
                 for field in metadata.fields:
                     field_name = field['name']
                     field_type = field.get('type', 'string')
-                    value = item.get(field_name, '')
+                    value = self._get_nested_value(item, field_name)
                     formatted = self._format_value(value, field_type)
                     values.append(f"{formatted:<16}")
                 print(" | ".join(values))
@@ -53,6 +53,16 @@ class CliBasicDisplay(DisplayBase):
             else:
                 for item in data:
                     print(item)
+    
+    def _get_nested_value(self, item: Dict, field_name: str):
+        keys = field_name.split('.')
+        value = item
+        for key in keys:
+            if isinstance(value, dict) and key in value:
+                value = value[key]
+            else:
+                return ''
+        return value
     
     def _json_default(self, obj):
         if isinstance(obj, int):

@@ -9,7 +9,7 @@ ELF Parser is a Python-based tool for analyzing embedded firmware by parsing ELF
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              Main Entry                                    │
-│                        main.py / test_simple.py                            │
+│                              main.py                                       │
 └─────────────────────────────────────────────────────────────────────────────┘
                                       │
           ┌───────────────────────────┼───────────────────────────┐
@@ -54,16 +54,15 @@ ELF Parser is a Python-based tool for analyzing embedded firmware by parsing ELF
                             │  Resource API   │
                             └─────────────────┘
                                       │
-          ┌───────────────────────────┼───────────────────────────┐
-          ▼                           ▼                           ▼
-┌─────────────────┐         ┌─────────────────┐         ┌─────────────────┐
-│  CLI Basic      │         │ CLI Interactive │         │    Web GUI      │
-│  (cli_basic)    │         │ (cli_interactive)│         │   (web_gui)     │
-│                 │         │                 │         │                 │
-│  Text output    │         │  Interactive    │         │  HTTP Server    │
-│  JSON format    │         │  Navigation     │         │  Browser UI     │
-│                 │         │  Tab panels     │         │                 │
-└─────────────────┘         └─────────────────┘         └─────────────────┘
+          ┌───────────────────┬───────┴───────┬───────────────────┐
+          ▼                   ▼               ▼                   ▼
+┌─────────────────┐   ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+│  CLI Basic      │   │ CLI Table       │ │    Web GUI      │ │   Trace32       │
+│  (cli_basic)    │   │ (cli_table)     │ │   (web_gui)     │ │ (trace32_format)│
+│                 │   │                 │ │                 │ │                 │
+│  Text output    │   │  Table format   │ │  HTTP Server    │ │ Trace32-style   │
+│  JSON format    │   │  Navigation     │ │  Browser UI     │ │  display        │
+└─────────────────┘   └─────────────────┘ └─────────────────┘ └─────────────────┘
 ```
 
 ## Directory Structure
@@ -72,15 +71,20 @@ ELF Parser is a Python-based tool for analyzing embedded firmware by parsing ELF
 |-----------|---------|
 | `core/` | Core components (ELF parsing, dump reading, plugin management, profile loading) |
 | `plugins/` | RTOS and module plugins (ThreadX, FreeRTOS, test_point, assert_info) |
-| `display/` | Display schemes (CLI basic, CLI interactive, Web GUI) |
+| `display/` | Display schemes (CLI basic, CLI table, Web GUI, Trace32 format) |
 | `profiles/` | Target configuration files (chip, OS, memory regions, QEMU settings) |
-| `tests/qemu_m4_threadx/` | Cortex-M4 ThreadX QEMU test scenario |
-| `tests/qemu_m4_freertos/` | Cortex-M4 FreeRTOS QEMU test scenario |
-| `tests/qemu_r52_threadx/` | Cortex-R52 ThreadX QEMU test scenario (ARMv8-R) |
-| `tests/qemu_r52_freertos/` | Cortex-R52 FreeRTOS QEMU test scenario (ARMv8-R) |
-| `tests/qemu_r52_bare/` | Cortex-R52 bare-metal QEMU test scenario |
-| `tests/qemu_riscv_bare/` | RISC-V bare-metal QEMU test scenario |
-| `tests/qemu_aarch64_bare/` | AArch64 bare-metal QEMU test scenario |
+| `tests/qemu/mps2_an386_bare/` | Cortex-M4 bare-metal QEMU test scenario |
+| `tests/qemu/mps2_an386_freertos/` | Cortex-M4 FreeRTOS QEMU test scenario |
+| `tests/qemu/mps2_an386_threadx/` | Cortex-M4 ThreadX QEMU test scenario |
+| `tests/qemu/mps3_an536_bare/` | Cortex-R52 bare-metal QEMU test scenario |
+| `tests/qemu/mps3_an536_freertos/` | Cortex-R52 FreeRTOS QEMU test scenario |
+| `tests/qemu/mps3_an536_threadx/` | Cortex-R52 ThreadX QEMU test scenario |
+| `tests/qemu/nxp_imx6ul_bare/` | NXP i.MX6UL (Cortex-A7) bare-metal QEMU test scenario |
+| `tests/qemu/nxp_imx6ul_threadx/` | NXP i.MX6UL (Cortex-A7) ThreadX QEMU test scenario |
+| `tests/qemu/riscv_virt_bare/` | RISC-V bare-metal QEMU test scenario |
+| `tests/qemu/stm32vldiscovery_bare/` | STM32VL Discovery bare-metal QEMU test scenario |
+| `tests/qemu/virt_a53_bare/` | ARM Cortex-A53 (AArch64) bare-metal QEMU test scenario |
+| `tests/bss_simulated/` | Simulated BSS data test scenario |
 | `tests/unit/` | Unit tests for core modules |
 | `tests/_common/` | Shared test utilities (QEMU runner, show_parsed_base) |
 | `rtos/` | RTOS source code submodules (ThreadX, FreeRTOS) - **DO NOT MODIFY** |
@@ -106,7 +110,7 @@ pip install -r requirements.txt
 ### Basic Usage
 
 ```bash
-python3 main.py --elf firmware.elf --dump dump.bin --profile profiles/test/qemu_m4_threadx.yaml
+python3 main.py --elf firmware.elf --dump dump.bin --profile profiles/qemu/mps2_an386_threadx.yaml
 ```
 
 ### Command Line Options
@@ -115,7 +119,7 @@ python3 main.py --elf firmware.elf --dump dump.bin --profile profiles/test/qemu_
 --elf        Path to ELF file (required)
 --dump       Path to memory dump file (required)
 --profile    Path to profile YAML file (required)
---display    Display scheme: cli_basic, cli_interactive, web_gui (default: cli_interactive)
+--display    Display scheme: cli_basic, cli_table, web_gui, trace32 (default: cli_table)
 ```
 
 ### Example Output
@@ -135,7 +139,7 @@ Profile YAML structure:
 
 ```yaml
 chip:
-  name: qemu_m4_threadx
+  name: qemu_mps2_an386_threadx
   vendor: qemu
   arch: armv7e-m
   cpu: cortex-m4
@@ -156,7 +160,7 @@ memory:
   offset_in_dump: 262144
 
 display:
-  scheme: cli_interactive
+  scheme: cli_table
   options:
     show_hex: true
     max_rows: 50
@@ -176,32 +180,33 @@ The `memory` section supports multiple regions with:
 
 ```bash
 # ThreadX test (Cortex-M4)
-cd tests/qemu_m4_threadx/firmware
+cd tests/qemu/mps2_an386_threadx/firmware
 bash build.sh
 python3 run_qemu.py
 
 # FreeRTOS test (Cortex-M4)
-cd tests/qemu_m4_freertos/firmware
+cd tests/qemu/mps2_an386_freertos/firmware
 bash build.sh
 python3 run_qemu.py
 
 # ThreadX test (Cortex-R52)
-cd tests/qemu_r52_threadx/firmware
+cd tests/qemu/mps3_an536_threadx/firmware
 bash build.sh
 python3 run_qemu.py
 
 # FreeRTOS test (Cortex-R52)
-cd tests/qemu_r52_freertos/firmware
+cd tests/qemu/mps3_an536_freertos/firmware
 bash build.sh
 python3 run_qemu.py
 
-# Run parser tests
-cd tests/qemu_r52_threadx
-python3 test_qemu_r52_threadx.py
+# ThreadX test (NXP i.MX6UL Cortex-A7)
+cd tests/qemu/nxp_imx6ul_threadx/firmware
+bash build.sh
+python3 run_qemu.py
 
 # Run all tests
 cd /path/to/elf_parser
-python3 -m unittest discover -s tests -p "test_*.py"
+python3 -m pytest tests/ -v
 ```
 
 ### Manual Testing
@@ -213,7 +218,7 @@ qemu-system-arm -machine mps2-an386 -cpu cortex-m4 -kernel firmware.axf \
   -serial file:output.log
 
 # Parse the dump
-python3 main.py --elf firmware.axf --dump ram_dump.bin --profile profiles/test/qemu_m4_threadx.yaml
+python3 main.py --elf firmware.axf --dump ram_dump.bin --profile profiles/qemu/mps2_an386_threadx.yaml
 ```
 
 ## Version Management
@@ -325,7 +330,8 @@ Plugins should return data in this format:
 
 ## Known Limitations
 
-- Supports ARM Cortex-M (32-bit) and Cortex-R (32-bit, including R52) targets
+- Supports ARM Cortex-M (32-bit), Cortex-R (32-bit, including R52), Cortex-A (32/64-bit) targets
+- Supports RISC-V targets
 - Supports ThreadX and FreeRTOS plugins
 - DWARF parsing optimized for GCC-compiled firmware
 - Cortex-R52 requires Hyp-to-SVC mode transition in startup code (QEMU boots in Hyp mode)
@@ -337,6 +343,35 @@ See LICENSE file for details.
 ---
 
 ## Changelog
+
+### v0.9.3 - 2026-07-19
+
+**测试用例清理与目录结构规范化**
+
+1. **删除无效测试用例**
+   - 删除 `tests/qemu/nxp_imx6ul_freertos/` 目录及相关文件（FreeRTOS ARM_CA9端口在QEMU virt机器上存在GIC初始化问题）
+   - 删除 `profiles/qemu/nxp_imx6ul_freertos.yaml`
+   - 删除根目录调试文件：`test_freertos_debug2.py`、`test_simple.py`、`test_rtos_parsing.py`
+
+2. **清理空目录**
+   - 删除 `profiles/test/`、`profiles/qemu/st/`、`profiles/qemu/arm/`、`profiles/qemu/riscv/`
+
+3. **修复路径引用**
+   - 修复多个 `run_qemu.py` 和 `show_parsed.py` 文件中的 `sys.path` 设置错误
+   - 修复 `build.sh` 中 RTOS_DIR 路径错误（从 `../../../rtos` 改为 `../../../../rtos`）
+   - 修复 `mps2_an386_freertos/firmware/main.c` 中 `test_firmware_bss.c` 包含路径
+
+4. **新增 Trace32 显示方案**
+   - 创建 `display/trace32_format.py`，支持按 Trace32 风格展示 RTOS 资源信息
+   - 支持地址十六进制显示、状态字符串化、CPU/栈占用率显示
+
+5. **更新 DisplayFactory**
+   - 添加 `trace32` 显示方案支持
+   - `get_supported_schemes()` 返回 `['cli_basic', 'cli_table', 'web_gui', 'trace32']`
+
+**测试结果**：171 个测试通过（7 个预先存在的 RISC-V bare metal 测试问题除外）
+
+---
 
 ### v0.9.2 - 2026-07-19
 
@@ -477,8 +512,7 @@ See LICENSE file for details.
 1. **插件基类重新组织**
    - 新增 `plugins/rtos/base.py`：RTOS 相关基类 `RTOSPlugin`，包含 `_walk_created_list()` 公共方法
    - ThreadX、FreeRTOS 插件改为继承 `RTOSPlugin`，从 943 行减少到 662 行
-   - Module 插件拆分为独立文件夹：`test_point_demo/` 和 `assert_info_demo/`
-   - 插件名称带 `_demo` 后缀，方便用户根据需要添加
+   - Module 插件拆分为独立文件夹：`test_point/` 和 `assert_info/`
 
 2. **ProfileModel 简化**
    - 移除 `os.version` 格式校验，裸机场景下 `os` 字段可选
@@ -492,7 +526,7 @@ See LICENSE file for details.
 
 4. **Profiles 目录重构**
    - 按厂商/设备命名 yaml 文件
-   - 新增 `profiles/qemu/` 目录：`m4_bare.yaml`、`m4_freertos.yaml`、`m4_threadx.yaml`、`r52_bare.yaml`、`r52_freertos.yaml`、`r52_threadx.yaml`、`aarch64_bare.yaml`、`riscv_bare.yaml`
+   - 新增 `profiles/qemu/` 目录：`mps2_an386_bare.yaml`、`mps2_an386_freertos.yaml`、`mps2_an386_threadx.yaml`、`mps3_an536_bare.yaml`、`mps3_an536_freertos.yaml`、`mps3_an536_threadx.yaml`、`nxp_imx6ul_bare.yaml`、`nxp_imx6ul_threadx.yaml`、`riscv_virt_bare.yaml`、`stm32vldiscovery_bare.yaml`、`virt_a53_bare.yaml`
    - `nxp/` 和 `unisoc/` 目录保持不变，按厂商划分
 
 5. **插件发现优化**
@@ -595,7 +629,7 @@ See LICENSE file for details.
 
 1. **补齐 5 个裸机测试场景的固件构建**
    - `bss_simulated`：新增 [build.sh](file:///Users/yangtao/Documents/elf_parser/tests/bss_simulated/firmware/build.sh)，修复 linker.ld 添加 `ENTRY(main)` 防止 `--gc-sections` 丢弃所有段
-   - `qemu_m4_bare`：新增 [build.sh](file:///Users/yangtao/Documents/elf_parser/tests/qemu_m4_bare/firmware/build.sh)，复用 `_common/test_firmware_bss.c`
+   - `qemu_m4_bare`：新增 [build.sh](file:///Users/yangtao/Documents/elf_parser/tests/qemu/mps2_an386_bare/firmware/build.sh)，复用 `_common/test_firmware_bss.c`
    - `qemu_aarch64_bare`、`qemu_r52_bare`、`qemu_riscv_bare`：修复 `run_qemu.py` 的 `sys.path` 路径（少了一层 `dirname` 导致 `_common` 模块找不到）
 
 2. **修复 run_qemu.py 路径设置**
@@ -644,7 +678,7 @@ See LICENSE file for details.
    - 兼容 `TCB_t.pcTaskName[16]`、`TX_THREAD.tx_thread_name[32]` 等场景
 
 3. **ThreadX 内核源码启用 DWARF 调试信息**
-   - 修改 `tests/qemu_m4_threadx/firmware/build.sh` 和 `tests/qemu_r52_threadx/firmware/build.sh`
+   - 修改 `tests/qemu/mps2_an386_threadx/firmware/build.sh` 和 `tests/qemu/mps3_an536_threadx/firmware/build.sh`
    - `CFLAGS_NODEBUG` 改为等同于 `CFLAGS_DEBUG`，让 ThreadX 内核 .c 文件也带 `-g -ggdb3`
    - 解决 `_tx_thread_current_ptr`、`_tx_thread_system_state` 等内核全局变量无法通过 `parse_struct_auto` 解析类型的问题
    - ELF 大小从 ~90KB 增至 ~290KB（M4）/ ~265KB（R52），DWARF 信息更完整
@@ -689,19 +723,19 @@ See LICENSE file for details.
 **Cortex-R52 跨架构泛用性验证**
 
 1. **Cortex-R52 ThreadX 测试场景**
-   - 创建 `tests/qemu_r52_threadx/` 测试目录，使用 ThreadX Cortex-R5 端口
+   - 创建 `tests/qemu/mps3_an536_threadx/` 测试目录，使用 ThreadX Cortex-R5 端口
    - 解决 QEMU Cortex-R52 在 Hyp 模式启动导致 `MSR CPSR` 崩溃的问题
    - 在 `startup.S` 中添加 Hyp 模式检测和 `ERET` 切换到 SVC 模式的代码
    - 修正 `tx_initialize_low_level.S` 中 `_sp` 符号引用和堆栈检查
    - 调整链接脚本：RAM 起始地址 0x20000000，4MB 空间，32KB 栈
-   - 创建测试用例 `test_qemu_r52_threadx.py`，10 个测试全部通过
+   - 创建测试用例 `test_qemu_mps3_an536_threadx.py`，10 个测试全部通过
 
 2. **Cortex-R52 FreeRTOS 测试场景**
-   - 完善 `tests/qemu_r52_freertos/` 测试目录
+   - 完善 `tests/qemu/mps3_an536_freertos/` 测试目录
    - 使用 FreeRTOS Cortex-R5 端口（`ARM_CR5`）
    - 修正 `pxCurrentTCB` 解析：使用 `read_uint32` 直接读取指针，而非 `parse_struct_auto`
    - 修正 `TCB_t` / `QueueDefinition` 结构体 kind 检查：同时接受 `struct` 和 `typedef`
-   - 创建测试用例 `test_qemu_r52_freertos.py`，9 个测试全部通过
+   - 创建测试用例 `test_qemu_mps3_an536_freertos.py`，9 个测试全部通过
 
 3. **测试用例修复与完善**
    - 修复 `qemu_m4_threadx` 测试用例：使用 `ProfileLoader` + `memory_regions` 替代过时的 `base_address` 参数
@@ -713,68 +747,6 @@ See LICENSE file for details.
    - 在 Hyp 模式下执行 `MSR CPSR` 或 `CPS` 指令会触发异常，导致 CPU 进入未定义状态
    - 解决方法：在启动代码中检测 CPSR 模式位，若为 Hyp 模式则使用 `ERET` 指令切换到 SVC 模式
    - 此发现对其他 ARMv8-R 架构的移植工作有重要参考价值
-
-**文件修改**
-
-- [tests/qemu_r52_threadx/firmware/startup.S](file:///Users/yangtao/Documents/elf_parser/tests/qemu_r52_threadx/firmware/startup.S) - 添加 Hyp 模式切换
-- [tests/qemu_r52_threadx/firmware/linker.ld](file:///Users/yangtao/Documents/elf_parser/tests/qemu_r52_threadx/firmware/linker.ld) - 内存布局调整
-- [tests/qemu_r52_threadx/firmware/sample_threadx.c](file:///Users/yangtao/Documents/elf_parser/tests/qemu_r52_threadx/firmware/sample_threadx.c) - 调试变量
-- [tests/qemu_r52_threadx/firmware/show_parsed.py](file:///Users/yangtao/Documents/elf_parser/tests/qemu_r52_threadx/firmware/show_parsed.py) - 显示脚本
-- [tests/qemu_r52_threadx/test_qemu_r52_threadx.py](file:///Users/yangtao/Documents/elf_parser/tests/qemu_r52_threadx/test_qemu_r52_threadx.py) - 测试用例
-- [tests/qemu_r52_freertos/test_qemu_r52_freertos.py](file:///Users/yangtao/Documents/elf_parser/tests/qemu_r52_freertos/test_qemu_r52_freertos.py) - 测试用例
-- [tests/qemu_m4_threadx/test_qemu_m4_threadx.py](file:///Users/yangtao/Documents/elf_parser/tests/qemu_m4_threadx/test_qemu_m4_threadx.py) - API 兼容性修复
-- [README.md](file:///Users/yangtao/Documents/elf_parser/README.md) - 文档更新
-
----
-
-### v0.1.1 - 2026-07-19
-
-**FreeRTOS插件修复**
-
-1. **任务解析逻辑修复**
-   - 修正 `List_t` 结构遍历方式：直接使用 List_t 大小而非指针数组
-   - 修正 TCB 地址计算：从 ListItem_t 地址减去 `xStateListItem` 偏移
-   - 修正任务名称读取：`pcTaskName` 是字符数组而非指针，直接从 TCB 读取
-   - 添加无效任务过滤：优先级 >= 32、栈地址不在有效范围、名称含 `\xff` 的任务被过滤
-
-2. **Profile配置修复**
-   - 修正 `os.name` 为 `freertos`（而非 `freertos_v11p3p0`），与插件注册一致
-   - 添加 `os.version` 字段
-   - 修正内存区域配置，使用单一 RAM 区域
-
-**线程同步操作增强**
-
-1. **ThreadX测试固件**
-   - 添加 thread 8/9，实现互斥锁优先级继承和队列通信
-   - 添加 queue_1、semaphore_1、mutex_1（带优先级继承）、event_flags_1
-   - 实现线程间复杂同步模式：事件标志触发、队列消息传递、互斥锁竞争
-
-2. **FreeRTOS测试固件**
-   - 添加 10 个任务，包含多种优先级（0-7）
-   - 添加 2 个互斥锁（xMutex1/xMutex2）、2 个队列（xQueue1/xQueue2）
-   - 添加二进制信号量（xBinarySem）和计数信号量（xCountSem）
-   - 添加 2 个事件组（xEventGrp1/xEventGrp2）和 2 个定时器（xTimer1/xTimer2）
-   - 实现复杂同步模式：互斥锁竞争、信号量同步、事件组等待、定时器触发
-
-**测试用例完善**
-
-1. **单元测试**
-   - `test_core.py`: 17 个测试用例全部通过
-   - `test_elf_parser_universality.py`: 8 个测试用例全部通过
-
-2. **QEMU测试场景**
-   - ThreadX: 成功解析 8 个线程、2 个信号量、2 个互斥锁、2 个队列、2 个事件标志、2 个定时器
-   - FreeRTOS: 成功解析 12 个任务（IDLE、TimerT、Recv、Event1、Mutex1、Mutex2、Sem1、Sender、Event2、HighPri、Sem2、Tmr Svc）
-
-**文件修改**
-
-- [plugins/rtos/freertos/freertos_v11p3p0.py](file:///Users/yangtao/Documents/elf_parser/plugins/rtos/freertos/freertos_v11p3p0.py) - 修复任务解析逻辑
-- [profiles/test/qemu_m4_freertos.yaml](file:///Users/yangtao/Documents/elf_parser/profiles/test/qemu_m4_freertos.yaml) - 修复OS配置
-- [profiles/test/qemu_m4_threadx.yaml](file:///Users/yangtao/Documents/elf_parser/profiles/test/qemu_m4_threadx.yaml) - 修复内存区域配置
-- [tests/qemu_m4_freertos/firmware/main.c](file:///Users/yangtao/Documents/elf_parser/tests/qemu_m4_freertos/firmware/main.c) - 丰富线程同步操作
-- [tests/qemu_m4_freertos/firmware/FreeRTOSConfig.h](file:///Users/yangtao/Documents/elf_parser/tests/qemu_m4_freertos/firmware/FreeRTOSConfig.h) - 增加最大优先级数
-- [tests/qemu_m4_threadx/firmware/sample_threadx.c](file:///Users/yangtao/Documents/elf_parser/tests/qemu_m4_threadx/firmware/sample_threadx.c) - 丰富线程同步操作
-- [test_simple.py](file:///Users/yangtao/Documents/elf_parser/test_simple.py) - 修复 `is_32bit()` 调用
 
 ---
 
@@ -820,68 +792,6 @@ See LICENSE file for details.
 9. **子模块代码约束**
    - 确认 `rtos/` 目录下的代码未被修改
    - 所有测试代码放在 `tests/` 目录下
-
-**文件修改**
-
-- [core/elf_parser.py](file:///Users/yangtao/Documents/elf_parser/core/elf_parser.py) - 递归visited-set、CU二分查找、ARMCC high_pc、编译器信息解析
-- [core/dump_reader.py](file:///Users/yangtao/Documents/elf_parser/core/dump_reader.py) - 多区域dump支持（offset_in_dump）
-- [display/base.py](file:///Users/yangtao/Documents/elf_parser/display/base.py) - 通用数据契约 ResourceMetadata
-- [display/data_adapter.py](file:///Users/yangtao/Documents/elf_parser/display/data_adapter.py) - 通用资源API
-- [display/cli_basic.py](file:///Users/yangtao/Documents/elf_parser/display/cli_basic.py) - 插件无关渲染器
-- [display/cli_interactive.py](file:///Users/yangtao/Documents/elf_parser/display/cli_interactive.py) - 插件无关渲染器
-- [display/web_gui.py](file:///Users/yangtao/Documents/elf_parser/display/web_gui.py) - 插件无关渲染器
-- [requirements.txt](file:///Users/yangtao/Documents/elf_parser/requirements.txt) - 依赖声明
-- [README.md](file:///Users/yangtao/Documents/elf_parser/README.md) - 完整文档
-
----
-
-### v0.0.3 - 2026-07-18
-
-**Bug修复**
-
-1. **QEMU锁死问题**：修正 `startup.S` 中的向量表和链接脚本符号（`_estack`、`_sdata`）
-2. **ELF解析超时**：通过编译 ThreadX 核心时不生成 debug 信息，将 DIE 数量从 10,047 减少到 373
-3. **任务名显示为空**：任务名存储在 flash 而非 RAM，添加 `read_memory_from_elf` 方法读取 flash 数据
-4. **定时器解析错误**：修正 `TX_TIMER` 结构体处理，使用内嵌的 `TX_TIMER_INTERNAL` 而非指针
-5. **编译单元方法缺失**：修正 `_build_cu_index`，使用 `cu.get_top_DIE()` 替代不存在的 `cu.get_low_pc()`
-
-**功能增强**
-
-1. **线程状态映射**：添加 `THREAD_STATE_MAP`，将数字状态码转换为可读状态名（`TX_READY`、`TX_DELAY` 等）
-2. **多任务测试固件**：生成包含 8 个线程、2 个定时器、mutex、semaphore、queue、event flags 的测试固件
-3. **编译优化**：在 `build.sh` 中拆分 `CFLAGS_DEBUG`（应用代码）和 `CFLAGS_NODEBUG`（ThreadX核心）
-
-**文件修改**
-
-- [tests/qemu_m4_threadx/firmware/sample_threadx.c](file:///Users/yangtao/Documents/elf_parser/tests/qemu_m4_threadx/firmware/sample_threadx.c) - 添加定时器和更多任务
-- [tests/qemu_m4_threadx/firmware/build.sh](file:///Users/yangtao/Documents/elf_parser/tests/qemu_m4_threadx/firmware/build.sh) - 拆分debug编译选项
-- [plugins/rtos/threadx/threadx_v6p5p1.py](file:///Users/yangtao/Documents/elf_parser/plugins/rtos/threadx/threadx_v6p5p1.py) - 修正定时器解析、任务状态映射
-- [core/elf_parser.py](file:///Users/yangtao/Documents/elf_parser/core/elf_parser.py) - 添加 read_memory_from_elf、修复CU解析
-
----
-
-### v0.0.2 - 2026-07-18
-
-**架构调整**
-
-1. **插件化架构**：重构为插件模式，RTOS插件独立于核心解析器
-2. **显示层抽象**：定义 `DisplayBase` 基类，支持多种显示方案（CLI/Web）
-3. **Profile系统**：使用 YAML 文件配置目标芯片、OS、内存区域等参数
-
-**核心功能**
-
-1. **ELF/DWARF解析**：使用 pyelftools 解析 ELF 文件和 DWARF 调试信息
-2. **符号表提取**：提取全局变量和函数符号，建立地址索引
-3. **结构体解析**：递归解析结构体类型，支持嵌套结构体、数组、指针
-4. **内存dump读取**：支持从二进制dump文件中读取内存数据
-5. **ThreadX插件**：实现 ThreadX v6.5.1 和 v5.6.0 的任务、mutex、semaphore、queue、event、timer 解析
-6. **FreeRTOS插件**：实现 FreeRTOS v11.3.0 的任务、queue、mutex、semaphore、timer 解析
-
-**显示方案**
-
-1. **CLI Basic**：基础文本输出，JSON格式显示
-2. **CLI Interactive**：交互式CLI，支持导航和详情查看
-3. **Web GUI**：基于 Flask 的 Web 界面，支持浏览器访问
 
 ---
 

@@ -19,7 +19,7 @@
 /* Rename shared main() so it doesn't conflict with our FreeRTOS main() */
 #define main firmware_bss_main
 
-#include "../../_common/test_firmware_bss.c"
+#include "../../../_common/test_firmware_bss.c"
 
 #undef main
 

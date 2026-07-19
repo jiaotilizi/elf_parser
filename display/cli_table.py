@@ -27,6 +27,16 @@ class CliTableDisplay(DisplayBase):
             }
         return None
     
+    def _get_nested_value(self, item: Dict, field_name: str):
+        keys = field_name.split('.')
+        value = item
+        for key in keys:
+            if isinstance(value, dict) and key in value:
+                value = value[key]
+            else:
+                return ''
+        return value
+    
     def _print_table(self, header: List[str], rows: List[List[str]]):
         if not rows:
             print("  (Empty)")
@@ -72,10 +82,11 @@ class CliTableDisplay(DisplayBase):
             for item in data:
                 row = []
                 for field in metadata.fields:
-                    value = item.get(field['name'], '')
+                    field_name = field['name']
+                    value = self._get_nested_value(item, field_name)
                     field_type = field.get('type', 'string')
                     formatted = self._format_value(value, field_type)
-                    max_len = field.get('max_len', 20)
+                    max_len = field.get('max_len', 25)
                     row.append(str(formatted)[:max_len])
                 rows.append(row)
             

@@ -124,8 +124,11 @@ class ShowParsedBase:
         spu = self.elf_parser.parse_struct_auto('g_string_pool_used', self.dump_reader)
         status_map = {0x01: 'RUNNING', 0x02: 'SUSPENDED', 0xFF: 'CRASHED', 0x00: 'IDLE'}
 
-        print(f"  g_system_ticks     = {ticks}  "
-              f"(运行时间: {ticks / 1000000:.3f} s)")
+        if ticks is not None:
+            print(f"  g_system_ticks     = {ticks}  "
+                  f"(运行时间: {ticks / 1000000:.3f} s)")
+        else:
+            print(f"  g_system_ticks     = {ticks}")
         print(f"  g_error_count      = {err}")
         print(f"  g_system_status    = 0x{st:02x}  ({status_map.get(st, 'UNKNOWN')})")
         print(f"  g_active_assert_idx= {active}")

@@ -1,18 +1,15 @@
-/*
- * Linker script for NXP i.MX6UL (Cortex-A7, ARMv7-A) + FreeRTOS
- */
-
 ENTRY(_start)
 
 MEMORY
 {
-  RAM (rwx) : ORIGIN = 0x40000000, LENGTH = 64M
+  RAM (rwx) : ORIGIN = 0x40000000, LENGTH = 256K
 }
 
 _estack = ORIGIN(RAM) + LENGTH(RAM);
 
 SECTIONS
 {
+  __vectors = ORIGIN(RAM);
   .text :
   {
     . = ALIGN(16);
@@ -25,7 +22,6 @@ SECTIONS
     _etext = .;
   } > RAM
 
-  _sidata = LOADADDR(.data);
   .data :
   {
     . = ALIGN(16);
@@ -34,7 +30,7 @@ SECTIONS
     *(.data.*)
     . = ALIGN(16);
     _edata = .;
-  } > RAM AT> RAM
+  } > RAM
 
   .bss (NOLOAD) :
   {
@@ -46,6 +42,18 @@ SECTIONS
     . = ALIGN(16);
     _ebss = .;
   } > RAM
+
+  .stack (NOLOAD) :
+  {
+    _stack_bottom = .;
+    . = ALIGN(8);
+    . += 16384;
+    _sp = . - 16;
+    _stack_top = .;
+  } > RAM
+
+  _end = .;
+  __end__ = .;
 
   /DISCARD/ :
   {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""QEMU NXP i.MX6UL (Cortex-A7) + FreeRTOS: run and dump RAM."""
+"""QEMU NXP i.MX6UL (Cortex-A7) + ThreadX: run and dump RAM."""
 import os
 import sys
 
@@ -14,9 +14,9 @@ if _COMMON_DIR not in sys.path:
 from _common.qemu_runner import runner_from_profile
 
 SCENARIO_DIR = os.path.dirname(os.path.abspath(__file__))
-ELF_FILENAME = 'output/img/test_firmware_nxp_imx6ul_freertos.elf'
-DUMP_FILENAME = 'output/img/test_dump_nxp_imx6ul_freertos.bin'
-PROFILE_NAME = 'qemu/nxp_imx6ul_freertos'
+ELF_FILENAME = 'output/img/test_firmware_nxp_imx6ul_threadx.elf'
+DUMP_FILENAME = 'output/img/test_dump_nxp_imx6ul_threadx.bin'
+PROFILE_NAME = 'qemu/nxp_imx6ul_threadx'
 
 
 def main():

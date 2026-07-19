@@ -15,7 +15,7 @@ BUILD_DIR=output/tmp
 IMG_DIR=output/img
 mkdir -p "$BUILD_DIR" "$IMG_DIR"
 
-RTOS_DIR=../../../rtos/freertos_v11p3p0
+RTOS_DIR=../../../../rtos/freertos_v11p3p0
 PORT_DIR=$RTOS_DIR/portable/GCC/ARM_CM4F
 MEMMANG_DIR=$RTOS_DIR/portable/MemMang
 

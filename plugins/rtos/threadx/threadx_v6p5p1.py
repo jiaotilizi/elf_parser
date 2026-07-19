@@ -91,7 +91,20 @@ class ThreadXV6Plugin(RTOSPlugin):
                                     break
                             break
         
+        self._calculate_cpu_usage(tasks)
+        
         return tasks
+    
+    def _calculate_cpu_usage(self, tasks: List[Dict[str, Any]]):
+        total_run_count = sum(task.get('run_count', 0) for task in tasks)
+        
+        if total_run_count > 0:
+            for task in tasks:
+                run_count = task.get('run_count', 0)
+                task['cpu_usage'] = round((run_count / total_run_count) * 100, 1)
+        else:
+            for task in tasks:
+                task['cpu_usage'] = 0.0
     
     def _parse_thread(self, thread_addr: int, thread_struct: Dict[str, Any], 
                      elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
@@ -189,12 +202,12 @@ class ThreadXV6Plugin(RTOSPlugin):
             elif member_name == 'tx_thread_timeout_parameter':
                 result['timeout_param'] = dump_reader.read_pointer_or_zero(thread_addr + member_offset, is_32bit)
         
-        result['stack_usage'] = self._calculate_stack_usage_highest(
+        result['stack_usage'] = round(self._calculate_stack_usage_highest(
             result['stack_start'],
             result['stack_size'],
             result['stack_highest_ptr'],
             result['stack_current']
-        )
+        ), 1)
         
         if result['entry_point']:
             func_info = elf_parser.find_function_by_address(result['entry_point'])
@@ -333,8 +346,8 @@ class ThreadXV6Plugin(RTOSPlugin):
             'address': queue_addr,
             'magic': queue_addr,
             'name': '',
-            'max_entries': 0,
-            'enqueued_count': 0,
+            'max_messages': 0,
+            'messages': 0,
             'message_size': 0,
             'suspended_count': 0,
         }
@@ -360,10 +373,10 @@ class ThreadXV6Plugin(RTOSPlugin):
                     result['name'] = name or ''
             
             elif member_name == 'tx_queue_enqueued':
-                result['enqueued_count'] = dump_reader.read_uint32(queue_addr + member_offset)
+                result['messages'] = dump_reader.read_uint32(queue_addr + member_offset)
             
             elif member_name == 'tx_queue_capacity':
-                result['max_entries'] = dump_reader.read_uint32(queue_addr + member_offset)
+                result['max_messages'] = dump_reader.read_uint32(queue_addr + member_offset)
             
             elif member_name == 'tx_queue_message_size':
                 result['message_size'] = dump_reader.read_uint32(queue_addr + member_offset)
@@ -436,6 +449,7 @@ class ThreadXV6Plugin(RTOSPlugin):
             'magic': timer_addr,
             'name': '',
             'active': False,
+            'state_name': '',
             'period_ticks': 0,
             'ticks_remaining': 0,
             'expiration_function': 0,
@@ -475,6 +489,7 @@ class ThreadXV6Plugin(RTOSPlugin):
             
             active_next = dump_reader.read_pointer(internal_ptr + 16, is_32bit)
             result['active'] = active_next != 0 and active_next is not None
+            result['state_name'] = 'ACTIVE' if result['active'] else 'INACTIVE'
         
         if result['expiration_function']:
             func_info = elf_parser.find_function_by_address(result['expiration_function'])

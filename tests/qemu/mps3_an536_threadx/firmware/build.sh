@@ -7,7 +7,7 @@ LD=${CROSS_COMPILE}ld
 OBJCOPY=${CROSS_COMPILE}objcopy
 OBJDUMP=${CROSS_COMPILE}objdump
 
-THREADX_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd ../../../rtos/threadx_v6p5p1 && pwd)
+THREADX_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd ../../../../rtos/threadx_v6p5p1 && pwd)
 COMMON_DIR=${THREADX_DIR}/common
 PORT_DIR=${THREADX_DIR}/ports/cortex_r5/gnu
 EXAMPLE_DIR=${PORT_DIR}/example_build
