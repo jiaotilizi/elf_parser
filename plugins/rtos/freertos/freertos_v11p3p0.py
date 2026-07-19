@@ -26,12 +26,12 @@ class FreeRTOSV11Plugin(OSPlugin):
     
     def get_resource(self, resource_type: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         resource_map = {
-            'tasks': self.get_tasks_internal,
-            'semaphores': self.get_semaphores_internal,
-            'mutexes': self.get_mutexes_internal,
-            'queues': self.get_queues_internal,
-            'timers': self.get_timers_internal,
-            'events': self.get_event_groups_internal,
+            'tasks': self._get_tasks,
+            'semaphores': self._get_semaphores,
+            'mutexes': self._get_mutexes,
+            'queues': self._get_queues,
+            'timers': self._get_timers,
+            'events': self._get_events,
         }
         func = resource_map.get(resource_type)
         if func:
@@ -123,7 +123,7 @@ class FreeRTOSV11Plugin(OSPlugin):
         
         return False
     
-    def get_tasks_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _get_tasks(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         tasks = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
@@ -309,7 +309,7 @@ class FreeRTOSV11Plugin(OSPlugin):
         
         return result
     
-    def get_semaphores_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _get_semaphores(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         semaphores = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
@@ -330,7 +330,7 @@ class FreeRTOSV11Plugin(OSPlugin):
         for sym in sem_symbols:
             sem_addr = dump_reader.read_pointer(sym['address'], is_32bit)
             if sem_addr:
-                sem_info = self._parse_semaphore(sem_addr, queue_struct, dump_reader, is_32bit)
+                sem_info = self._parse_semaphore(sem_addr, queue_struct, dump_reader, is_32bit, elf_parser)
                 if sem_info and sem_info['max_count'] > 0:
                     sem_info['name'] = sym['name']
                     semaphores.append(sem_info)
@@ -338,7 +338,7 @@ class FreeRTOSV11Plugin(OSPlugin):
         return semaphores
     
     def _parse_semaphore(self, sem_addr: int, queue_struct: Dict[str, Any], 
-                        dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
+                        dump_reader, is_32bit: bool, elf_parser) -> Optional[Dict[str, Any]]:
         result = {
             'address': sem_addr,
             'name': '',
@@ -371,16 +371,16 @@ class FreeRTOSV11Plugin(OSPlugin):
             ux_length_offset = None
             ux_item_size_offset = None
             
-            list_struct = self.elf_parser.get_struct_type('List_t')
+            list_struct = elf_parser.get_struct_type('List_t')
             if list_struct:
                 list_size = list_struct.get('byte_size', 20)
-                ux_messages_waiting_offset = 2 * list_size
+                ux_messages_waiting_offset = 16 + 2 * list_size
                 ux_length_offset = ux_messages_waiting_offset + 4
                 ux_item_size_offset = ux_length_offset + 4
             else:
-                ux_messages_waiting_offset = 40
-                ux_length_offset = 44
-                ux_item_size_offset = 48
+                ux_messages_waiting_offset = 56
+                ux_length_offset = 60
+                ux_item_size_offset = 64
             
             result['max_count'] = dump_reader.read_uint32(sem_addr + ux_length_offset)
             item_size = dump_reader.read_uint32(sem_addr + ux_item_size_offset)
@@ -396,7 +396,7 @@ class FreeRTOSV11Plugin(OSPlugin):
         
         return result
     
-    def get_mutexes_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _get_mutexes(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         mutexes = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
@@ -417,7 +417,7 @@ class FreeRTOSV11Plugin(OSPlugin):
         for sym in mutex_symbols:
             mutex_addr = dump_reader.read_pointer(sym['address'], is_32bit)
             if mutex_addr:
-                mutex_info = self._parse_mutex(mutex_addr, queue_struct, dump_reader, is_32bit)
+                mutex_info = self._parse_mutex(mutex_addr, queue_struct, dump_reader, is_32bit, elf_parser)
                 if mutex_info and mutex_info['count'] >= 0:
                     mutex_info['name'] = sym['name']
                     mutexes.append(mutex_info)
@@ -425,7 +425,7 @@ class FreeRTOSV11Plugin(OSPlugin):
         return mutexes
     
     def _parse_mutex(self, mutex_addr: int, queue_struct: Dict[str, Any], 
-                    dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
+                    dump_reader, is_32bit: bool, elf_parser) -> Optional[Dict[str, Any]]:
         result = {
             'address': mutex_addr,
             'name': '',
@@ -449,14 +449,14 @@ class FreeRTOSV11Plugin(OSPlugin):
                 elif member_name == 'uxMessagesWaiting':
                     result['count'] = dump_reader.read_uint32(mutex_addr + member_offset)
         else:
-            list_struct = self.elf_parser.get_struct_type('List_t')
+            list_struct = elf_parser.get_struct_type('List_t')
             if list_struct:
                 list_size = list_struct.get('byte_size', 20)
-                px_mutex_holder_offset = 2 * list_size + 8
-                ux_messages_waiting_offset = 2 * list_size
+                ux_messages_waiting_offset = 16 + 2 * list_size
+                px_mutex_holder_offset = ux_messages_waiting_offset + 12
             else:
-                px_mutex_holder_offset = 48
-                ux_messages_waiting_offset = 40
+                ux_messages_waiting_offset = 56
+                px_mutex_holder_offset = 68
             
             result['owner'] = dump_reader.read_pointer_or_zero(mutex_addr + px_mutex_holder_offset, is_32bit)
             result['count'] = dump_reader.read_uint32(mutex_addr + ux_messages_waiting_offset)
@@ -467,7 +467,7 @@ class FreeRTOSV11Plugin(OSPlugin):
         
         return result
     
-    def get_queues_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _get_queues(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         queues = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
@@ -487,7 +487,7 @@ class FreeRTOSV11Plugin(OSPlugin):
         for sym in queue_symbols:
             queue_addr = dump_reader.read_pointer(sym['address'], is_32bit)
             if queue_addr:
-                queue_info = self._parse_queue(queue_addr, queue_struct, dump_reader, is_32bit)
+                queue_info = self._parse_queue(queue_addr, queue_struct, dump_reader, is_32bit, elf_parser)
                 if queue_info:
                     queue_info['name'] = sym['name']
                     queues.append(queue_info)
@@ -495,7 +495,7 @@ class FreeRTOSV11Plugin(OSPlugin):
         return queues
     
     def _parse_queue(self, queue_addr: int, queue_struct: Dict[str, Any], 
-                    dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
+                    dump_reader, is_32bit: bool, elf_parser) -> Optional[Dict[str, Any]]:
         result = {
             'address': queue_addr,
             'name': '',
@@ -520,16 +520,16 @@ class FreeRTOSV11Plugin(OSPlugin):
                 elif member_name == 'uxItemSize':
                     result['message_size'] = dump_reader.read_uint32(queue_addr + member_offset)
         else:
-            list_struct = self.elf_parser.get_struct_type('List_t')
+            list_struct = elf_parser.get_struct_type('List_t')
             if list_struct:
                 list_size = list_struct.get('byte_size', 20)
-                ux_messages_waiting_offset = 2 * list_size
+                ux_messages_waiting_offset = 16 + 2 * list_size
                 ux_length_offset = ux_messages_waiting_offset + 4
                 ux_item_size_offset = ux_length_offset + 4
             else:
-                ux_messages_waiting_offset = 40
-                ux_length_offset = 44
-                ux_item_size_offset = 48
+                ux_messages_waiting_offset = 56
+                ux_length_offset = 60
+                ux_item_size_offset = 64
             
             result['messages_max'] = dump_reader.read_uint32(queue_addr + ux_length_offset)
             result['message_size'] = dump_reader.read_uint32(queue_addr + ux_item_size_offset)
@@ -539,7 +539,7 @@ class FreeRTOSV11Plugin(OSPlugin):
         
         return result
     
-    def get_timers_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _get_timers(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         timers = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
@@ -669,7 +669,7 @@ class FreeRTOSV11Plugin(OSPlugin):
         
         return result
     
-    def get_event_groups_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _get_events(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         event_groups = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
@@ -765,11 +765,11 @@ class FreeRTOSV11Plugin(OSPlugin):
     
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         return {
-            'tasks': self.get_tasks(context),
-            'semaphores': self.get_semaphores(context),
-            'mutexes': self.get_mutexes(context),
-            'queues': self.get_queues(context),
-            'timers': self.get_timers(context),
-            'event_groups': self.get_event_groups(context),
+            'tasks': self.get_resource('tasks', context),
+            'semaphores': self.get_resource('semaphores', context),
+            'mutexes': self.get_resource('mutexes', context),
+            'queues': self.get_resource('queues', context),
+            'timers': self.get_resource('timers', context),
+            'events': self.get_resource('events', context),
             'heap': self.get_heap_info(context),
         }

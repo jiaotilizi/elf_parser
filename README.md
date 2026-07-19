@@ -347,6 +347,7 @@ See LICENSE file for details.
    - FreeRTOS任务优先级范围：通过`uxTopUsedPriority`符号动态获取，替代硬编码的8级优先级
    - 地址有效性检查：添加`ux_number_of_items`检查、TCB地址范围检查、优先级有效性检查
    - 列表解析逻辑优化：正确处理`xListEnd`结束标记，避免链表遍历越界
+   - **修复FreeRTOS QueueDefinition偏移量**：修正`uxMessagesWaiting`偏移从`2 * list_size`改为`16 + 2 * list_size`（4个指针各4字节=16字节）
 
 2. **ThreadX插件修复**
    - 将`_tx_thread_ready_list`替换为正确的`_tx_thread_priority_list`符号
@@ -358,6 +359,7 @@ See LICENSE file for details.
    - 新增`get_resource(resource_type, context)`方法：根据类型获取资源
    - 统一context管理：基类`initialize`中自动存储`_elf_parser`和`_dump_reader`
    - 默认方法优化：`get_tasks/get_semaphores/get_mutexes/get_queues/get_timers/get_events`统一委托给`get_resource`
+   - **资源类型枚举统一**：`ResourceType`枚举从`plugins/__init__.py`迁移到`plugins/base.py`，删除`plugins/__init__.py`
 
 4. **资源发现机制泛化**
    - 插件自注册支持的资源类型，新增资源类型无需修改基类
@@ -365,6 +367,10 @@ See LICENSE file for details.
    - FreeRTOS支持：tasks, semaphores, mutexes, queues, timers, events
    - ThreadX v6支持：tasks, semaphores, mutexes, queues, events, timers, block_pools, byte_pools
    - ThreadX v5支持：tasks, semaphores, mutexes, queues
+
+5. **插件内部方法规范化**
+   - 私有方法命名统一：`_get_tasks()`代替`get_tasks_internal()`
+   - `execute()`和`get_detail()`统一通过`get_resource()`分发
 
 **测试结果**：35 个 RTOS 测试全部通过
 

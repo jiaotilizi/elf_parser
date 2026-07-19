@@ -26,10 +26,10 @@ class ThreadXV5Plugin(OSPlugin):
     
     def get_resource(self, resource_type: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         resource_map = {
-            'tasks': self.get_tasks_internal,
-            'semaphores': self.get_semaphores_internal,
-            'mutexes': self.get_mutexes_internal,
-            'queues': self.get_queues_internal,
+            'tasks': self._get_tasks,
+            'semaphores': self._get_semaphores,
+            'mutexes': self._get_mutexes,
+            'queues': self._get_queues,
         }
         func = resource_map.get(resource_type)
         if func:
@@ -54,7 +54,7 @@ class ThreadXV5Plugin(OSPlugin):
             'TX_HEAP',
         ]
     
-    def get_tasks_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _get_tasks(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         tasks = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
@@ -161,7 +161,7 @@ class ThreadXV5Plugin(OSPlugin):
         }
         return state_map.get(state_val, f'UNKNOWN({state_val})')
     
-    def get_semaphores_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _get_semaphores(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         semaphores = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
@@ -229,7 +229,7 @@ class ThreadXV5Plugin(OSPlugin):
         
         return result
     
-    def get_mutexes_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _get_mutexes(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         mutexes = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
@@ -298,7 +298,7 @@ class ThreadXV5Plugin(OSPlugin):
         
         return result
     
-    def get_queues_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _get_queues(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         queues = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
@@ -422,9 +422,9 @@ class ThreadXV5Plugin(OSPlugin):
     
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         return {
-            'tasks': self.get_tasks(context),
-            'semaphores': self.get_semaphores(context),
-            'mutexes': self.get_mutexes(context),
-            'queues': self.get_queues(context),
+            'tasks': self.get_resource('tasks', context),
+            'semaphores': self.get_resource('semaphores', context),
+            'mutexes': self.get_resource('mutexes', context),
+            'queues': self.get_resource('queues', context),
             'heap': self.get_heap_info(context),
         }

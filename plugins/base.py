@@ -1,7 +1,43 @@
 import logging
-from typing import Dict, List, Optional, Any, Callable
+from enum import Enum
+from typing import Dict, List, Optional, Any
 
 logger = logging.getLogger(__name__)
+
+
+class ResourceType(str, Enum):
+    TASKS = 'tasks'
+    MUTEXES = 'mutexes'
+    SEMAPHORES = 'semaphores'
+    QUEUES = 'queues'
+    EVENTS = 'events'
+    TIMERS = 'timers'
+    BLOCK_POOLS = 'block_pools'
+    BYTE_POOLS = 'byte_pools'
+    TEST_POINTS = 'test_points'
+    ASSERT_INFO = 'assert_info'
+
+
+RESOURCE_TYPE_MAP = {
+    'task': ResourceType.TASKS,
+    'mutex': ResourceType.MUTEXES,
+    'semaphore': ResourceType.SEMAPHORES,
+    'queue': ResourceType.QUEUES,
+    'event': ResourceType.EVENTS,
+    'timer': ResourceType.TIMERS,
+    'block_pool': ResourceType.BLOCK_POOLS,
+    'byte_pool': ResourceType.BYTE_POOLS,
+    'test_point': ResourceType.TEST_POINTS,
+}
+
+
+def normalize_resource_type(resource_type: str) -> str:
+    if not resource_type:
+        return resource_type
+    try:
+        return ResourceType(resource_type).value
+    except ValueError:
+        return RESOURCE_TYPE_MAP.get(resource_type, resource_type)
 
 
 class PluginResult:
@@ -60,20 +96,15 @@ class OSPlugin(Plugin):
         super().__init__(name, version, description)
         self.os_name = os_name
         self.os_version = os_version
-        self._context = None
-        self._elf_parser = None
-        self._dump_reader = None
     
     def initialize(self, context: Dict[str, Any]) -> bool:
-        self._context = context
-        self._elf_parser = context.get('elf_parser')
-        self._dump_reader = context.get('dump_reader')
         return True
     
     def get_resource_types(self) -> List[str]:
         return []
     
     def get_resource(self, resource_type: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        normalized_type = normalize_resource_type(resource_type)
         return []
     
     def get_tasks(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -96,9 +127,6 @@ class OSPlugin(Plugin):
     
     def get_heap_info(self, context: Dict[str, Any]) -> Dict[str, Any]:
         return {}
-    
-    def get_current_task(self, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        return None
     
     def get_display_config(self) -> Dict[str, Any]:
         return {

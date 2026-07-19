@@ -3,7 +3,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from typing import Dict, List, Optional, Any
-from plugins.base import OSPlugin
+from plugins.base import OSPlugin, normalize_resource_type
 
 
 class ThreadXV6Plugin(OSPlugin):
@@ -80,14 +80,14 @@ class ThreadXV6Plugin(OSPlugin):
     
     def get_resource(self, resource_type: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         resource_map = {
-            'tasks': self.get_tasks_internal,
-            'semaphores': self.get_semaphores_internal,
-            'mutexes': self.get_mutexes_internal,
-            'queues': self.get_queues_internal,
-            'events': self.get_events_internal,
-            'timers': self.get_timers_internal,
-            'block_pools': self.get_block_pools_internal,
-            'byte_pools': self.get_byte_pools_internal,
+            'tasks': self._get_tasks,
+            'semaphores': self._get_semaphores,
+            'mutexes': self._get_mutexes,
+            'queues': self._get_queues,
+            'events': self._get_events,
+            'timers': self._get_timers,
+            'block_pools': self._get_block_pools,
+            'byte_pools': self._get_byte_pools,
         }
         func = resource_map.get(resource_type)
         if func:
@@ -120,7 +120,7 @@ class ThreadXV6Plugin(OSPlugin):
             'TX_HEAP',
         ]
     
-    def get_tasks_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _get_tasks(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         tasks = self._walk_created_list(
             '_tx_thread_created_ptr',
             'TX_THREAD',
@@ -263,7 +263,7 @@ class ThreadXV6Plugin(OSPlugin):
         
         return result
     
-    def get_semaphores_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _get_semaphores(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         return self._walk_created_list(
             '_tx_semaphore_created_ptr',
             'TX_SEMAPHORE',
@@ -312,7 +312,7 @@ class ThreadXV6Plugin(OSPlugin):
         
         return result
     
-    def get_mutexes_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _get_mutexes(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         return self._walk_created_list(
             '_tx_mutex_created_ptr',
             'TX_MUTEX',
@@ -378,7 +378,7 @@ class ThreadXV6Plugin(OSPlugin):
         
         return result
     
-    def get_queues_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _get_queues(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         return self._walk_created_list(
             '_tx_queue_created_ptr',
             'TX_QUEUE',
@@ -433,7 +433,7 @@ class ThreadXV6Plugin(OSPlugin):
         
         return result
     
-    def get_events_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _get_events(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         return self._walk_created_list(
             '_tx_event_flags_created_ptr',
             'TX_EVENT_FLAGS_GROUP',
@@ -480,7 +480,7 @@ class ThreadXV6Plugin(OSPlugin):
         
         return result
     
-    def get_timers_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _get_timers(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         return self._walk_created_list(
             '_tx_timer_created_ptr',
             'TX_TIMER',
@@ -543,7 +543,7 @@ class ThreadXV6Plugin(OSPlugin):
         
         return result
     
-    def get_block_pools_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _get_block_pools(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         return self._walk_created_list(
             '_tx_block_pool_created_ptr',
             'TX_BLOCK_POOL',
@@ -594,7 +594,7 @@ class ThreadXV6Plugin(OSPlugin):
         
         return result
     
-    def get_byte_pools_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _get_byte_pools(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         return self._walk_created_list(
             '_tx_byte_pool_created_ptr',
             'TX_BYTE_POOL',
@@ -701,62 +701,25 @@ class ThreadXV6Plugin(OSPlugin):
         if not self._context:
             return None
         
-        from plugins import normalize_resource_type
         resource_type = normalize_resource_type(resource_type)
+        resources = self.get_resource(resource_type, self._context)
         
-        if resource_type == 'tasks':
-            tasks = self.get_tasks(self._context)
-            for task in tasks:
-                if task.get('address') == address or task.get('magic') == address:
-                    return task
-        elif resource_type == 'mutexes':
-            mutexes = self.get_mutexes(self._context)
-            for mutex in mutexes:
-                if mutex.get('address') == address or mutex.get('magic') == address:
-                    return mutex
-        elif resource_type == 'semaphores':
-            semaphores = self.get_semaphores(self._context)
-            for sem in semaphores:
-                if sem.get('address') == address or sem.get('magic') == address:
-                    return sem
-        elif resource_type == 'queues':
-            queues = self.get_queues(self._context)
-            for queue in queues:
-                if queue.get('address') == address or queue.get('magic') == address:
-                    return queue
-        elif resource_type == 'events':
-            events = self.get_events(self._context)
-            for event in events:
-                if event.get('address') == address or event.get('magic') == address:
-                    return event
-        elif resource_type == 'timers':
-            timers = self.get_timers(self._context)
-            for timer in timers:
-                if timer.get('address') == address or timer.get('magic') == address:
-                    return timer
-        elif resource_type == 'block_pools':
-            pools = self.get_block_pools(self._context)
-            for pool in pools:
-                if pool.get('address') == address or pool.get('magic') == address:
-                    return pool
-        elif resource_type == 'byte_pools':
-            pools = self.get_byte_pools(self._context)
-            for pool in pools:
-                if pool.get('address') == address or pool.get('magic') == address:
-                    return pool
+        for resource in resources:
+            if resource.get('address') == address or resource.get('magic') == address:
+                return resource
         
         return None
     
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         self._context = context
         return {
-            'tasks': self.get_tasks(context),
-            'semaphores': self.get_semaphores(context),
-            'mutexes': self.get_mutexes(context),
-            'queues': self.get_queues(context),
-            'events': self.get_events(context),
-            'timers': self.get_timers(context),
-            'block_pools': self.get_block_pools(context),
-            'byte_pools': self.get_byte_pools(context),
+            'tasks': self.get_resource('tasks', context),
+            'semaphores': self.get_resource('semaphores', context),
+            'mutexes': self.get_resource('mutexes', context),
+            'queues': self.get_resource('queues', context),
+            'events': self.get_resource('events', context),
+            'timers': self.get_resource('timers', context),
+            'block_pools': self.get_resource('block_pools', context),
+            'byte_pools': self.get_resource('byte_pools', context),
             'heap': self.get_heap_info(context),
         }
