@@ -1,9 +1,10 @@
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+import logging
+import struct
+from typing import Dict, List, Optional, Any, Tuple
 
-from typing import Dict, List, Optional, Any
-from plugins.rtos.base import RTOSPlugin
+from ..base import RTOSPlugin
+
+logger = logging.getLogger(__name__)
 
 
 class FreeRTOSV11Plugin(RTOSPlugin):
@@ -283,10 +284,14 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         is_32bit = elf_parser.is_32bit()
         
         all_symbols = elf_parser.get_all_symbols()
+        # Discover semaphore symbols by naming convention (e.g., xSemaphore, xBinarySem)
+        # This heuristic may miss non-standard names; DWARF type-based discovery is preferred
         sem_symbols = [s for s in all_symbols if s['name'].startswith('x') and 
                       ('Sem' in s['name'] or 'sem' in s['name']) and
                       'Task' not in s['name'] and
                       s['type'] == 'global_object']
+        if not sem_symbols:
+            logger.debug("No semaphore symbols found by naming convention heuristic")
         
         queue_struct = elf_parser.get_struct_type('QueueDefinition')
         
@@ -337,6 +342,8 @@ class FreeRTOSV11Plugin(RTOSPlugin):
                 ux_length_offset = ux_messages_waiting_offset + 4
                 ux_item_size_offset = ux_length_offset + 4
             else:
+                logger.warning("Using hardcoded fallback offsets for QueueDefinition — "
+                              "DWARF type info missing, results may be inaccurate")
                 ux_messages_waiting_offset = 56
                 ux_length_offset = 60
                 ux_item_size_offset = 64
@@ -414,6 +421,8 @@ class FreeRTOSV11Plugin(RTOSPlugin):
                 ux_messages_waiting_offset = 16 + 2 * list_size
                 px_mutex_holder_offset = ux_messages_waiting_offset + 12
             else:
+                logger.warning("Using hardcoded fallback offsets for QueueDefinition (mutex) — "
+                              "DWARF type info missing, results may be inaccurate")
                 ux_messages_waiting_offset = 56
                 px_mutex_holder_offset = 68
             
@@ -486,6 +495,8 @@ class FreeRTOSV11Plugin(RTOSPlugin):
                 ux_length_offset = ux_messages_waiting_offset + 4
                 ux_item_size_offset = ux_length_offset + 4
             else:
+                logger.warning("Using hardcoded fallback offsets for QueueDefinition — "
+                              "DWARF type info missing, results may be inaccurate")
                 ux_messages_waiting_offset = 56
                 ux_length_offset = 60
                 ux_item_size_offset = 64
@@ -600,6 +611,9 @@ class FreeRTOSV11Plugin(RTOSPlugin):
             
             list_struct = elf_parser.get_struct_type('ListItem_t')
             list_item_size = list_struct.get('byte_size', 20) if list_struct else 20
+            if list_struct is None:
+                logger.warning("Using hardcoded fallback ListItem_t size=20 for timer parsing — "
+                              "DWARF type info missing, results may be inaccurate")
             
             x_timer_period_offset = pc_timer_name_offset + 4 + list_item_size
             uc_status_offset = x_timer_period_offset + 4 + 4 + 4

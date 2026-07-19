@@ -125,6 +125,41 @@ class RTOSPlugin(Plugin):
             return self._dump_reader.read_string(addr, max_length) or ''
         except Exception:
             return ''
+
+    def _read_resource_name(self, addr: int, name_ptr_addr: int,
+                            is_32bit: bool = True, max_length: int = 32) -> str:
+        """Read a resource name from a pointer field.
+
+        Tries to read the string from the dump at the pointer address first.
+        If the dump read fails (e.g., name is in .rodata not in the dump),
+        falls back to reading from the ELF file.
+
+        Args:
+            addr: Base address of the resource struct.
+            name_ptr_addr: Address of the name pointer field (addr + offset).
+            is_32bit: Whether the target is 32-bit.
+            max_length: Maximum string length.
+        """
+        name_addr = self._dump_reader.read_pointer(name_ptr_addr, is_32bit)
+        if not name_addr:
+            return ''
+
+        name = self._read_string(name_addr, max_length)
+        if name:
+            return name
+
+        # Fallback: try reading from ELF (e.g., .rodata section)
+        if self._elf_parser:
+            elf_data = self._elf_parser.read_memory_from_elf(name_addr, max_length)
+            if elf_data:
+                null_pos = elf_data.find(b'\x00')
+                if null_pos >= 0:
+                    elf_data = elf_data[:null_pos]
+                try:
+                    return elf_data.decode('utf-8')
+                except UnicodeDecodeError:
+                    return elf_data.decode('latin-1')
+        return ''
     
     def _walk_singly_linked_list(self,
                                 symbol_name: str,

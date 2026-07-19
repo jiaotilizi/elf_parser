@@ -1,9 +1,10 @@
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
+import logging
+import struct
 from typing import Dict, List, Optional, Any
-from plugins.rtos.base import RTOSPlugin
+
+from ..base import RTOSPlugin
+
+logger = logging.getLogger(__name__)
 
 
 class ThreadXV6Plugin(RTOSPlugin):
@@ -150,20 +151,7 @@ class ThreadXV6Plugin(RTOSPlugin):
             member_offset = member.get('offset', 0)
             
             if member_name == 'tx_thread_name':
-                name_addr = dump_reader.read_pointer(thread_addr + member_offset, is_32bit)
-                if name_addr:
-                    name = dump_reader.read_string(name_addr, 32)
-                    if not name:
-                        elf_data = elf_parser.read_memory_from_elf(name_addr, 32)
-                        if elf_data:
-                            null_pos = elf_data.find(b'\x00')
-                            if null_pos >= 0:
-                                elf_data = elf_data[:null_pos]
-                            try:
-                                name = elf_data.decode('utf-8')
-                            except UnicodeDecodeError:
-                                name = elf_data.decode('latin-1')
-                    result['name'] = name or ''
+                result['name'] = self._read_resource_name(thread_addr, thread_addr + member_offset, is_32bit)
             
             elif member_name == 'tx_thread_state':
                 result['state'] = dump_reader.read_uint32(thread_addr + member_offset)
@@ -241,20 +229,7 @@ class ThreadXV6Plugin(RTOSPlugin):
             member_offset = member.get('offset', 0)
             
             if member_name == 'tx_semaphore_name':
-                name_addr = dump_reader.read_pointer(sem_addr + member_offset, is_32bit)
-                if name_addr:
-                    name = dump_reader.read_string(name_addr, 32)
-                    if not name:
-                        elf_data = elf_parser.read_memory_from_elf(name_addr, 32)
-                        if elf_data:
-                            null_pos = elf_data.find(b'\x00')
-                            if null_pos >= 0:
-                                elf_data = elf_data[:null_pos]
-                            try:
-                                name = elf_data.decode('utf-8')
-                            except UnicodeDecodeError:
-                                name = elf_data.decode('latin-1')
-                    result['name'] = name or ''
+                result['name'] = self._read_resource_name(sem_addr, sem_addr + member_offset, is_32bit)
             
             elif member_name == 'tx_semaphore_count':
                 result['count'] = dump_reader.read_uint32(sem_addr + member_offset)
@@ -292,20 +267,7 @@ class ThreadXV6Plugin(RTOSPlugin):
             member_offset = member.get('offset', 0)
             
             if member_name == 'tx_mutex_name':
-                name_addr = dump_reader.read_pointer(mutex_addr + member_offset, is_32bit)
-                if name_addr:
-                    name = dump_reader.read_string(name_addr, 32)
-                    if not name:
-                        elf_data = elf_parser.read_memory_from_elf(name_addr, 32)
-                        if elf_data:
-                            null_pos = elf_data.find(b'\x00')
-                            if null_pos >= 0:
-                                elf_data = elf_data[:null_pos]
-                            try:
-                                name = elf_data.decode('utf-8')
-                            except UnicodeDecodeError:
-                                name = elf_data.decode('latin-1')
-                    result['name'] = name or ''
+                result['name'] = self._read_resource_name(mutex_addr, mutex_addr + member_offset, is_32bit)
             
             elif member_name == 'tx_mutex_owner':
                 result['owner'] = dump_reader.read_pointer_or_zero(mutex_addr + member_offset, is_32bit)
@@ -357,20 +319,7 @@ class ThreadXV6Plugin(RTOSPlugin):
             member_offset = member.get('offset', 0)
             
             if member_name == 'tx_queue_name':
-                name_addr = dump_reader.read_pointer(queue_addr + member_offset, is_32bit)
-                if name_addr:
-                    name = dump_reader.read_string(name_addr, 32)
-                    if not name:
-                        elf_data = elf_parser.read_memory_from_elf(name_addr, 32)
-                        if elf_data:
-                            null_pos = elf_data.find(b'\x00')
-                            if null_pos >= 0:
-                                elf_data = elf_data[:null_pos]
-                            try:
-                                name = elf_data.decode('utf-8')
-                            except UnicodeDecodeError:
-                                name = elf_data.decode('latin-1')
-                    result['name'] = name or ''
+                result['name'] = self._read_resource_name(queue_addr, queue_addr + member_offset, is_32bit)
             
             elif member_name == 'tx_queue_enqueued':
                 result['messages'] = dump_reader.read_uint32(queue_addr + member_offset)
@@ -410,20 +359,7 @@ class ThreadXV6Plugin(RTOSPlugin):
             member_offset = member.get('offset', 0)
             
             if member_name == 'tx_event_flags_group_name':
-                name_addr = dump_reader.read_pointer(event_addr + member_offset, is_32bit)
-                if name_addr:
-                    name = dump_reader.read_string(name_addr, 32)
-                    if not name:
-                        elf_data = elf_parser.read_memory_from_elf(name_addr, 32)
-                        if elf_data:
-                            null_pos = elf_data.find(b'\x00')
-                            if null_pos >= 0:
-                                elf_data = elf_data[:null_pos]
-                            try:
-                                name = elf_data.decode('utf-8')
-                            except UnicodeDecodeError:
-                                name = elf_data.decode('latin-1')
-                    result['name'] = name or ''
+                result['name'] = self._read_resource_name(event_addr, event_addr + member_offset, is_32bit)
             
             elif member_name == 'tx_event_flags_group_flags':
                 result['flags'] = dump_reader.read_uint32(event_addr + member_offset)
@@ -463,20 +399,7 @@ class ThreadXV6Plugin(RTOSPlugin):
             member_offset = member.get('offset', 0)
             
             if member_name == 'tx_timer_name':
-                name_addr = dump_reader.read_pointer(timer_addr + member_offset, is_32bit)
-                if name_addr:
-                    name = dump_reader.read_string(name_addr, 32)
-                    if not name:
-                        elf_data = elf_parser.read_memory_from_elf(name_addr, 32)
-                        if elf_data:
-                            null_pos = elf_data.find(b'\x00')
-                            if null_pos >= 0:
-                                elf_data = elf_data[:null_pos]
-                            try:
-                                name = elf_data.decode('utf-8')
-                            except UnicodeDecodeError:
-                                name = elf_data.decode('latin-1')
-                    result['name'] = name or ''
+                result['name'] = self._read_resource_name(timer_addr, timer_addr + member_offset, is_32bit)
             
             elif member_name == 'tx_timer_internal':
                 internal_ptr = timer_addr + member_offset
@@ -523,20 +446,7 @@ class ThreadXV6Plugin(RTOSPlugin):
             member_offset = member.get('offset', 0)
             
             if member_name == 'tx_block_pool_name':
-                name_addr = dump_reader.read_pointer(pool_addr + member_offset, is_32bit)
-                if name_addr:
-                    name = dump_reader.read_string(name_addr, 32)
-                    if not name:
-                        elf_data = elf_parser.read_memory_from_elf(name_addr, 32)
-                        if elf_data:
-                            null_pos = elf_data.find(b'\x00')
-                            if null_pos >= 0:
-                                elf_data = elf_data[:null_pos]
-                            try:
-                                name = elf_data.decode('utf-8')
-                            except UnicodeDecodeError:
-                                name = elf_data.decode('latin-1')
-                    result['name'] = name or ''
+                result['name'] = self._read_resource_name(pool_addr, pool_addr + member_offset, is_32bit)
             
             elif member_name == 'tx_block_pool_total':
                 result['total_blocks'] = dump_reader.read_uint32(pool_addr + member_offset)
@@ -575,20 +485,7 @@ class ThreadXV6Plugin(RTOSPlugin):
             member_offset = member.get('offset', 0)
             
             if member_name == 'tx_byte_pool_name':
-                name_addr = dump_reader.read_pointer(pool_addr + member_offset, is_32bit)
-                if name_addr:
-                    name = dump_reader.read_string(name_addr, 32)
-                    if not name:
-                        elf_data = elf_parser.read_memory_from_elf(name_addr, 32)
-                        if elf_data:
-                            null_pos = elf_data.find(b'\x00')
-                            if null_pos >= 0:
-                                elf_data = elf_data[:null_pos]
-                            try:
-                                name = elf_data.decode('utf-8')
-                            except UnicodeDecodeError:
-                                name = elf_data.decode('latin-1')
-                    result['name'] = name or ''
+                result['name'] = self._read_resource_name(pool_addr, pool_addr + member_offset, is_32bit)
             
             elif member_name == 'tx_byte_pool_size':
                 result['total_bytes'] = dump_reader.read_uint32(pool_addr + member_offset)

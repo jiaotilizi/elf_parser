@@ -10,28 +10,20 @@ class AssertInfoPlugin(ModulePlugin):
             module_type='analysis',
             description='Parse assertion/fault information from dump'
         )
-        self._context = None
-    
+
     def get_required_symbols(self) -> List[str]:
         return [
             'g_assert_info',
             's_assert_record',
             'g_fault_log',
         ]
-    
+
     def get_required_structs(self) -> List[str]:
         return [
             'assert_info_t',
             'fault_record_t',
         ]
-    
-    def initialize(self, context: Dict[str, Any]) -> bool:
-        self.elf_parser = context.get('elf_parser')
-        self.dump_reader = context.get('dump_reader')
-        self.profile = context.get('profile')
-        self._context = context
-        return True
-    
+
     def parse_assert_info(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         results = []
         elf_parser = context.get('elf_parser')
@@ -118,13 +110,13 @@ class AssertInfoPlugin(ModulePlugin):
             record['assert_id'] = int.from_bytes(record_data[0:4], byteorder='little')
             
             name_addr = int.from_bytes(record_data[4:8], byteorder='little') if is_32bit else int.from_bytes(record_data[4:12], byteorder='little')
-            if name_addr != 0 and hasattr(self, 'dump_reader'):
+            if name_addr != 0 and self.dump_reader:
                 record['file_name'] = self.dump_reader.read_string(name_addr, 64) or ''
             
             record['line_number'] = int.from_bytes(record_data[8:12], byteorder='little') if is_32bit else int.from_bytes(record_data[12:20], byteorder='little')
             
             task_name_addr = int.from_bytes(record_data[12:16], byteorder='little') if is_32bit else int.from_bytes(record_data[20:28], byteorder='little')
-            if task_name_addr != 0 and hasattr(self, 'dump_reader'):
+            if task_name_addr != 0 and self.dump_reader:
                 record['task_name'] = self.dump_reader.read_string(task_name_addr, 32) or ''
             
             record['timestamp'] = int.from_bytes(record_data[16:20], byteorder='little') if is_32bit else int.from_bytes(record_data[28:36], byteorder='little')

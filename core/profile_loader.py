@@ -15,13 +15,19 @@ class PluginRegistry:
     def load_plugin(plugin_path: str):
         import_path = f"plugins.{plugin_path}"
         
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        if project_root not in sys.path:
-            sys.path.insert(0, project_root)
-        
         try:
             module = importlib.import_module(import_path)
-            
+        except ImportError:
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if project_root not in sys.path:
+                sys.path.insert(0, project_root)
+            try:
+                module = importlib.import_module(import_path)
+            except ImportError as e:
+                logger.error(f"Failed to import plugin {import_path}: {e}")
+                raise ValueError(f"Failed to import plugin {import_path}: {e}")
+        
+        try:
             from plugins.base import Plugin
             for attr_name in dir(module):
                 attr = getattr(module, attr_name)
@@ -101,13 +107,11 @@ class ProfileLoader:
                         with open(filepath, 'r') as f:
                             content = yaml.safe_load(f)
                             os_name = content.get('os', {}).get('name', 'unknown')
-                            os_version = content.get('os', {}).get('version', 'unknown')
                             profiles.append({
                                 'name': rel_path[:-5],
                                 'path': filepath,
                                 'chip': content.get('chip', {}).get('name', 'unknown'),
                                 'os': os_name,
-                                'os_version': os_version,
                             })
                     except Exception as e:
                         logger.warning(f"Failed to parse profile {filepath}: {e}")
@@ -116,7 +120,6 @@ class ProfileLoader:
                             'path': filepath,
                             'chip': 'unknown',
                             'os': 'unknown',
-                            'os_version': 'unknown',
                         })
         
         return profiles

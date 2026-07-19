@@ -10,28 +10,20 @@ class TestPointPlugin(ModulePlugin):
             module_type='test',
             description='Parse test point/trace information from global variable structures'
         )
-        self._context = None
-    
+
     def get_required_symbols(self) -> List[str]:
         return [
             'g_test_point_array',
             'g_trace_buffer',
             's_test_points',
         ]
-    
+
     def get_required_structs(self) -> List[str]:
         return [
             'test_point_t',
             'trace_record_t',
         ]
-    
-    def initialize(self, context: Dict[str, Any]) -> bool:
-        self.elf_parser = context.get('elf_parser')
-        self.dump_reader = context.get('dump_reader')
-        self.profile = context.get('profile')
-        self._context = context
-        return True
-    
+
     def parse_test_points(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         results = []
         elf_parser = context.get('elf_parser')

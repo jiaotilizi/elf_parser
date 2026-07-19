@@ -344,6 +344,36 @@ See LICENSE file for details.
 
 ## Changelog
 
+### v0.9.6 - 2026-07-19
+
+**工程质量优化：架构改进、代码质量提升、性能优化**
+
+1. **架构改进**
+   - 添加 `core/__init__.py`、`plugins/__init__.py`、`plugins/rtos/__init__.py`、`plugins/module/__init__.py` 包初始化文件
+   - 核心包支持便捷重导出（`ELFParser`、`DumpReader`、`ProfileLoader` 等）
+   - 新增 `PluginContext` 类（`core/context.py`），提供结构化上下文访问，替代裸字典
+   - 清理 `ProfileLoader.list_profiles()` 中废弃的 `os.version` 字段
+
+2. **代码质量提升**
+   - 移除插件文件中的 `sys.path.insert` 硬编码，改用相对导入（`from ..base import RTOSPlugin`）
+   - `main.py` 和 `profile_loader.py` 改用 try/except ImportError 模式，优雅处理路径问题
+   - `elf_parser.py` 中 `print` 调试语句统一转换为 `logging` 模块
+   - `import` 语句全部移至文件顶部（`re`、`time`、`bisect`）
+   - `_visited.remove()` 统一为 `_visited.discard()`，避免 KeyError
+   - FreeRTOS 插件硬编码偏移回退路径添加 `logger.warning` 日志
+   - FreeRTOS 插件命名约定符号发现添加注释说明和 debug 日志
+   - ThreadX 插件 name 解析逻辑抽取为 `RTOSPlugin._read_resource_name()` 公共方法，消除 8 处重复代码
+   - `ModulePlugin` 基类添加 `initialize()` 方法，与 `RTOSPlugin` 保持一致（`self._elf_parser` / `self._dump_reader`）
+
+3. **性能优化**
+   - `_find_cu_by_address`：直接存储 CU 对象引用，消除线性遍历
+   - `_find_segment_for_address`：构建排序区间列表，使用二分查找（O(log n)）
+   - `get_all_symbols`：添加结果缓存，避免重复构建列表
+
+**测试结果**：168 个测试通过（7 个预先存在的 RISC-V bare metal 测试问题除外）
+
+---
+
 ### v0.9.3 - 2026-07-19
 
 **测试用例清理与目录结构规范化**

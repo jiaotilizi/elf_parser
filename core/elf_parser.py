@@ -1,11 +1,17 @@
-import os
+import bisect
+import logging
+import re
 import struct
+import time
 from typing import Dict, List, Optional, Tuple, Any
+
 from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import SymbolTableSection
 from elftools.dwarf.dwarfinfo import DWARFInfo
 from elftools.dwarf.compileunit import CompileUnit
 from elftools.dwarf.die import DIE
+
+logger = logging.getLogger(__name__)
 
 
 class ELFParser:
@@ -15,6 +21,7 @@ class ELFParser:
         self.dwarfinfo = None
         
         self._symbol_cache: Dict[str, Tuple[int, int, str]] = {}
+        self._all_symbols_cache: Optional[List[Dict[str, Any]]] = None
         self._cu_cache: List[Tuple[int, int, int]] = []
         self._struct_type_cache: Dict[str, Any] = {}
         
@@ -22,6 +29,7 @@ class ELFParser:
         self._address_size = 4
         
         self._segment_cache: List[Dict[str, Any]] = []
+        self._sorted_segment_ranges: List[Tuple[int, int, Dict[str, Any]]] = []  # (vaddr, vaddr+memsz, seg)
         self._elf_header_info: Dict[str, Any] = {}
         
         self._dwarf_version: str = 'unknown'
@@ -57,6 +65,11 @@ class ELFParser:
                         'memsz': seg_memsz,
                         'data': seg_data,
                     })
+            
+            self._sorted_segment_ranges = sorted(
+                [(s['vaddr'], s['vaddr'] + s['memsz'], s) for s in self._segment_cache],
+                key=lambda x: x[0]
+            )
             
             self._parse_symbols()
             
@@ -96,9 +109,7 @@ class ELFParser:
                 if isinstance(producer, bytes):
                     producer = producer.decode('utf-8', errors='replace')
                 self._producer_string = producer
-                
-                import re
-                
+
                 armcc_match = re.search(r'ARM Compiler|armclang|ARM C/C\+\+ Compiler', producer, re.IGNORECASE)
                 gcc_match = re.search(r'GCC|gnu|gcc', producer, re.IGNORECASE)
                 iar_match = re.search(r'IAR|IAR Systems', producer, re.IGNORECASE)
@@ -152,12 +163,11 @@ class ELFParser:
         return f"{bind_map.get(st_bind, 'unknown')}_{type_map.get(st_type, 'unknown')}"
     
     def _build_cu_index(self):
-        import time
         start = time.time()
         if not self.dwarfinfo:
             return
         
-        for cu_idx, cu in enumerate(self.dwarfinfo.iter_CUs()):
+        for cu in self.dwarfinfo.iter_CUs():
             low_pc = None
             high_pc = None
             try:
@@ -177,29 +187,25 @@ class ELFParser:
                 pass
             
             if low_pc is not None and high_pc is not None:
-                self._cu_cache.append((low_pc, high_pc, cu_idx))
+                self._cu_cache.append((low_pc, high_pc, cu))
         
         self._cu_cache.sort(key=lambda x: x[0])
         elapsed = time.time() - start
-        print(f"[PERF] _build_cu_index: {len(self._cu_cache)} CUs, {elapsed:.3f}s")
+        logger.debug("_build_cu_index: %d CUs, %.3fs", len(self._cu_cache), elapsed)
     
     def _find_cu_by_address(self, address: int) -> Optional[CompileUnit]:
-        import bisect
         if not self._cu_cache:
             return None
         
         low_pcs = [cu[0] for cu in self._cu_cache]
         idx = bisect.bisect_right(low_pcs, address) - 1
         if idx >= 0:
-            low_pc, high_pc, cu_idx = self._cu_cache[idx]
+            low_pc, high_pc, cu = self._cu_cache[idx]
             if low_pc <= address < high_pc:
-                for i, cu in enumerate(self.dwarfinfo.iter_CUs()):
-                    if i == cu_idx:
-                        return cu
+                return cu
         return None
     
     def _build_type_cache(self):
-        import time
         start = time.time()
         if not self.dwarfinfo:
             return
@@ -253,7 +259,8 @@ class ELFParser:
                         self._var_type_cache[var_name] = var_type_info
 
         elapsed = time.time() - start
-        print(f"[PERF] _build_type_cache: {die_count} DIEs, {len(self._struct_type_cache)} types, {len(self._var_type_cache)} vars, {elapsed:.3f}s")
+        logger.debug("_build_type_cache: %d DIEs, %d types, %d vars, %.3fs",
+                     die_count, len(self._struct_type_cache), len(self._var_type_cache), elapsed)
 
     def _resolve_type_ref(self, die: 'DIE', die_by_offset: Dict[int, 'DIE']) -> Optional['DIE']:
         """解析 DW_AT_type 引用，把 CU 相对偏移转为 .debug_info 绝对偏移再查找 DIE。
@@ -281,8 +288,7 @@ class ELFParser:
         _visited.add(die.offset)
         
         if _depth > 20:
-            import sys
-            print(f"[DEBUG] Deep recursion in struct parsing (depth={_depth}), die offset={die.offset:x}", file=sys.stderr)
+            logger.debug("Deep recursion in struct parsing (depth=%d), die offset=0x%x", _depth, die.offset)
             return {'kind': 'struct', 'name': None, 'byte_size': 0, 'members': [], '_deep_truncated': True}
         
         info = {
@@ -303,7 +309,7 @@ class ELFParser:
                 if member:
                     info['members'].append(member)
         
-        _visited.remove(die.offset)
+        _visited.discard(die.offset)
         return info
 
     def _parse_typedef_die(self, die: DIE, die_by_offset: Dict[int, 'DIE'], _depth: int = 0, 
@@ -591,8 +597,7 @@ class ELFParser:
             _visited = set()
         
         if depth > 20:
-            import sys
-            print(f"[DEBUG] Deep recursion in _read_typed_value (depth={depth}), address=0x{address:x}", file=sys.stderr)
+            logger.debug("Deep recursion in _read_typed_value (depth=%d), address=0x%x", depth, address)
             return {'error': 'max depth exceeded'}
 
         if not type_info:
@@ -753,6 +758,8 @@ class ELFParser:
         return None
     
     def get_all_symbols(self) -> List[Dict[str, Any]]:
+        if self._all_symbols_cache is not None:
+            return self._all_symbols_cache
         result = []
         for name in self._symbol_cache:
             addr, size, stype = self._symbol_cache[name]
@@ -762,6 +769,7 @@ class ELFParser:
                 'size': size,
                 'type': stype,
             })
+        self._all_symbols_cache = result
         return result
 
     def find_symbols_by_pattern(self, pattern: str) -> List[Dict[str, Any]]:
@@ -812,10 +820,13 @@ class ELFParser:
         return self._struct_type_cache.get(struct_name)
 
     def _find_segment_for_address(self, address: int, size: int = 0) -> Optional[Dict[str, Any]]:
-        for seg in self._segment_cache:
-            seg_vaddr = seg['vaddr']
-            seg_memsz = seg['memsz']
-            if seg_vaddr <= address < seg_vaddr + seg_memsz:
+        if not self._sorted_segment_ranges:
+            return None
+        low_addrs = [r[0] for r in self._sorted_segment_ranges]
+        idx = bisect.bisect_right(low_addrs, address) - 1
+        if idx >= 0:
+            start, end, seg = self._sorted_segment_ranges[idx]
+            if start <= address < end:
                 return seg
         return None
     

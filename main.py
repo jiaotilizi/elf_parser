@@ -3,11 +3,16 @@ import json
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from core.elf_parser import ELFParser
+    from core.dump_reader import DumpReader
+    from core.profile_loader import ProfileLoader
+except ImportError:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from core.elf_parser import ELFParser
+    from core.dump_reader import DumpReader
+    from core.profile_loader import ProfileLoader
 
-from core.elf_parser import ELFParser
-from core.dump_reader import DumpReader
-from core.profile_loader import ProfileLoader
 from display import DisplayFactory
 from display.data_adapter import DataAdapter
 
