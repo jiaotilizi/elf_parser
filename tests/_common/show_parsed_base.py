@@ -192,3 +192,27 @@ class ShowParsedBase:
             print(f"  [{i:<2}] {tr['timestamp']:>10} {tr['point_id']:>5} "
                   f"{tr['task_id']:>5} {ev_map.get(tr['event_type'], str(tr['event_type'])):>7} "
                   f"{tr['data']:>6}{marker}")
+
+
+def show_parsed_from_scenario(
+    scenario_dir: str,
+    profile_name: str,
+    elf_filename: str,
+    dump_filename: str,
+):
+    class ShowParsed(ShowParsedBase):
+        BANNER_TITLE = f'QEMU {profile_name} — Crash Dump 自动恢复演示'
+        BANNER_LINES = [
+            f'  ELF  : {elf_filename}',
+            f'  Dump : {dump_filename}',
+            f'  原理 : 通过 DWARF 自动推导结构体布局，从 raw memory dump 恢复结构化数据',
+        ]
+        FOOTER_LINES = ['★ 解析完成']
+
+    show = ShowParsed(
+        scenario_dir=scenario_dir,
+        elf_filename=elf_filename,
+        dump_filename=dump_filename,
+        profile_name=profile_name,
+    )
+    return show.run()

@@ -1,0 +1,29 @@
+chip:
+  name: qemu_nxp_imx6ul_bare
+  vendor: nxp
+  description: QEMU NXP i.MX6UL (Cortex-A7, ARMv7-A) bare-metal
+  arch: armv7-a
+  cpu: cortex-a7
+  bits: 32
+qemu:
+  binary: qemu-system-arm
+  machine: virt
+  cpu: cortex-a7
+  kernel_arg: -kernel
+  ram_base: 1073741824
+  ram_size: 16384
+  run_seconds: 2.0
+memory:
+- name: ram
+  start_addr: 1073741824
+  size: 16384
+display:
+  scheme: cli_basic
+  options:
+    show_hex: true
+plugins: []
+keyword:
+- g_system_ticks
+- test_points
+- trace_buffer
+- nxp
