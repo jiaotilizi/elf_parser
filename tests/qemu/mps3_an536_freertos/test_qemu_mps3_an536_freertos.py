@@ -169,6 +169,18 @@ class TestQEMUMps3An536FreeRTOSFirmwareAutoParse(unittest.TestCase):
         self.assertGreaterEqual(len(visited), 1,
                                "At least one task list should be non-null")
 
+    def _get_plugin(self):
+        """Helper: load and initialize the FreeRTOS plugin."""
+        from plugins.rtos.freertos.freertos_v11p3p0 import FreeRTOSV11Plugin
+        plugin = FreeRTOSV11Plugin()
+        context = {
+            'elf_parser': self.elf_parser,
+            'dump_reader': self.dump_reader,
+            'profile': {},
+        }
+        self.assertTrue(plugin.initialize(context), "Plugin initialize() should return True")
+        return plugin, context
+
     def test_freertos_plugin_loadable(self):
         """FreeRTOS11p3p0Plugin initializes without exceptions."""
         try:
@@ -188,6 +200,119 @@ class TestQEMUMps3An536FreeRTOSFirmwareAutoParse(unittest.TestCase):
 
         tasks = plugin.get_tasks(context)
         self.assertIsInstance(tasks, list, "get_tasks() should return a list")
+
+    # ========================================================================
+    # 数据准确性检查 — 通过插件 execute() 验证资源的数据值
+    # 基于固件源码 main.c 中的创建参数（mps3_an536 无定时器）
+    # ========================================================================
+
+    def test_plugin_task_data(self):
+        """验证任务数据：名称、优先级、数量是否与固件源码一致。"""
+        plugin, context = self._get_plugin()
+        result = plugin.execute(context)
+        tasks = result['tasks']
+
+        self.assertGreaterEqual(len(tasks), 9,
+                               f"Expected at least 9 tasks, got {len(tasks)}")
+
+        by_name = {t['name']: t for t in tasks if t.get('name')}
+
+        expected = {
+            'Sender':  2,
+            'Recv':    3,
+            'Mutex1':  1,
+            'Mutex2':  1,
+            'Sem1':    4,
+            'Sem2':    4,
+            'Event1':  5,
+            'Event2':  5,
+            'HighPri': 0,
+        }
+        for name, expected_priority in expected.items():
+            self.assertIn(name, by_name, f"Task '{name}' should exist")
+            self.assertEqual(by_name[name]['priority'], expected_priority,
+                           f"Task '{name}' priority should be {expected_priority}")
+
+        self.assertIn('IDLE', by_name, "IDLE task should exist")
+
+    def test_plugin_semaphore_data(self):
+        """验证信号量数据。"""
+        plugin, context = self._get_plugin()
+        result = plugin.execute(context)
+        semaphores = result['semaphores']
+
+        by_name = {s['name']: s for s in semaphores if s.get('name')}
+
+        self.assertIn('xCountSem', by_name, "xCountSem should exist")
+        self.assertEqual(by_name['xCountSem']['max_count'], 10,
+                        "xCountSem max_count should be 10")
+
+        self.assertIn('xBinarySem', by_name, "xBinarySem should exist")
+        self.assertEqual(by_name['xBinarySem']['max_count'], 1,
+                        "xBinarySem max_count should be 1")
+
+        self.assertNotIn('xMutex1', by_name, "xMutex1 should NOT be in semaphores")
+        self.assertNotIn('xMutex2', by_name, "xMutex2 should NOT be in semaphores")
+
+    def test_plugin_mutex_data(self):
+        """验证互斥锁数据。"""
+        plugin, context = self._get_plugin()
+        result = plugin.execute(context)
+        mutexes = result['mutexes']
+
+        by_name = {m['name']: m for m in mutexes if m.get('name')}
+
+        self.assertEqual(len(mutexes), 2, f"Expected 2 mutexes, got {len(mutexes)}")
+        self.assertIn('xMutex1', by_name, "xMutex1 should exist")
+        self.assertIn('xMutex2', by_name, "xMutex2 should exist")
+
+    def test_plugin_queue_data(self):
+        """验证队列数据。"""
+        plugin, context = self._get_plugin()
+        result = plugin.execute(context)
+        queues = result['queues']
+
+        by_name = {q['name']: q for q in queues if q.get('name')}
+
+        self.assertEqual(len(queues), 2, f"Expected 2 queues, got {len(queues)}")
+        self.assertIn('xQueue1', by_name, "xQueue1 should exist")
+        self.assertEqual(by_name['xQueue1']['max_messages'], 8)
+        self.assertEqual(by_name['xQueue1']['message_size'], 4)
+        self.assertIn('xQueue2', by_name, "xQueue2 should exist")
+        self.assertEqual(by_name['xQueue2']['max_messages'], 5)
+        self.assertEqual(by_name['xQueue2']['message_size'], 4)
+
+    def test_plugin_event_data(self):
+        """验证事件组数据。"""
+        plugin, context = self._get_plugin()
+        result = plugin.execute(context)
+        events = result['events']
+
+        by_name = {e['name']: e for e in events if e.get('name')}
+
+        self.assertEqual(len(events), 2, f"Expected 2 event groups, got {len(events)}")
+        self.assertIn('xEventGrp1', by_name, "xEventGrp1 should exist")
+        self.assertIn('xEventGrp2', by_name, "xEventGrp2 should exist")
+
+    def test_plugin_no_timers(self):
+        """mps3_an536 场景未创建定时器，timers 应为空。"""
+        plugin, context = self._get_plugin()
+        result = plugin.execute(context)
+        self.assertEqual(len(result['timers']), 0,
+                        "mps3_an536 should have no timers")
+
+    def test_plugin_resource_type_separation(self):
+        """验证资源类型无重叠。"""
+        plugin, context = self._get_plugin()
+        result = plugin.execute(context)
+
+        sem_addrs = {s['address'] for s in result['semaphores']}
+        mutex_addrs = {m['address'] for m in result['mutexes']}
+        queue_addrs = {q['address'] for q in result['queues']}
+
+        self.assertTrue(sem_addrs.isdisjoint(mutex_addrs))
+        self.assertTrue(queue_addrs.isdisjoint(sem_addrs))
+        self.assertTrue(queue_addrs.isdisjoint(mutex_addrs))
 
 
 if __name__ == '__main__':

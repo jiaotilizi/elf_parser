@@ -137,47 +137,139 @@ class TestQEMUNxpImx6ulThreadXFirmwareAutoParse(unittest.TestCase):
         tasks = plugin.get_tasks(context)
         self.assertIsInstance(tasks, list, "get_tasks() should return a list")
 
-    def test_threadx_plugin_execute(self):
-        """ThreadX plugin execute should return valid results for all resource types."""
-        try:
-            from plugins.rtos.threadx.threadx_v6p5p1 import ThreadXV6Plugin
-        except ImportError as e:
-            self.skipTest(f"ThreadX plugin import failed: {e}")
-
+    def _get_plugin(self):
+        """Helper: load and initialize the ThreadX plugin."""
+        from plugins.rtos.threadx.threadx_v6p5p1 import ThreadXV6Plugin
+        plugin = ThreadXV6Plugin()
         context = {
             'elf_parser': self.elf_parser,
             'dump_reader': self.dump_reader,
             'profile': {},
         }
+        self.assertTrue(plugin.initialize(context), "Plugin initialize() should return True")
+        return plugin, context
 
-        plugin = ThreadXV6Plugin()
-        plugin.initialize(context)
+    # ========================================================================
+    # 数据准确性检查 — 通过插件 execute() 验证资源的数据值
+    # 基于 sample_threadx.c 中的 tx_thread_create / tx_queue_create 等参数
+    # ========================================================================
+
+    def test_plugin_task_data(self):
+        """验证线程数据：名称、优先级、数量是否与固件源码一致。"""
+        plugin, context = self._get_plugin()
+        result = plugin.execute(context)
+        tasks = result['tasks']
+
+        self.assertGreaterEqual(len(tasks), 10,
+                               f"Expected at least 10 threads, got {len(tasks)}")
+
+        by_name = {t['name']: t for t in tasks if t.get('name')}
+
+        expected = {
+            'thread 0': 1, 'thread 1': 16, 'thread 2': 16, 'thread 3': 8,
+            'thread 4': 8, 'thread 5': 4, 'thread 6': 8, 'thread 7': 8,
+            'thread 8': 2, 'thread 9': 3,
+        }
+        for name, expected_priority in expected.items():
+            self.assertIn(name, by_name, f"Thread '{name}' should exist")
+            self.assertEqual(by_name[name]['priority'], expected_priority,
+                           f"Thread '{name}' priority should be {expected_priority}")
+
+        self.assertIn('System Timer Thread', by_name, "System Timer Thread should exist")
+
+        for task in tasks:
+            if task.get('name', '').startswith('thread '):
+                self.assertEqual(task.get('stack_size', 0), 1024,
+                               f"Thread '{task.get('name')}' stack_size should be 1024")
+
+    def test_plugin_semaphore_data(self):
+        """验证信号量数据：名称。"""
+        plugin, context = self._get_plugin()
+        semaphores = plugin.execute(context)['semaphores']
+        by_name = {s['name']: s for s in semaphores if s.get('name')}
+        self.assertGreaterEqual(len(semaphores), 2,
+                               f"Expected at least 2 semaphores, got {len(semaphores)}")
+        self.assertIn('semaphore 0', by_name, "semaphore 0 should exist")
+        self.assertIn('semaphore 1', by_name, "semaphore 1 should exist")
+
+    def test_plugin_mutex_data(self):
+        """验证互斥锁数据：名称。"""
+        plugin, context = self._get_plugin()
+        mutexes = plugin.execute(context)['mutexes']
+        by_name = {m['name']: m for m in mutexes if m.get('name')}
+        self.assertEqual(len(mutexes), 2, f"Expected 2 mutexes, got {len(mutexes)}")
+        self.assertIn('mutex 0', by_name, "mutex 0 should exist")
+        self.assertIn('mutex 1', by_name, "mutex 1 should exist")
+
+    def test_plugin_queue_data(self):
+        """验证队列数据：名称、容量。"""
+        plugin, context = self._get_plugin()
+        queues = plugin.execute(context)['queues']
+        by_name = {q['name']: q for q in queues if q.get('name')}
+        self.assertEqual(len(queues), 2, f"Expected 2 queues, got {len(queues)}")
+        self.assertIn('queue 0', by_name, "queue 0 should exist")
+        self.assertEqual(by_name['queue 0']['max_messages'], 100,
+                        "queue 0 capacity should be 100")
+        self.assertIn('queue 1', by_name, "queue 1 should exist")
+        self.assertEqual(by_name['queue 1']['max_messages'], 10,
+                        "queue 1 capacity should be 10")
+
+    def test_plugin_event_data(self):
+        """验证事件组数据：名称。"""
+        plugin, context = self._get_plugin()
+        events = plugin.execute(context)['events']
+        by_name = {e['name']: e for e in events if e.get('name')}
+        self.assertGreaterEqual(len(events), 2,
+                               f"Expected at least 2 event groups, got {len(events)}")
+        self.assertIn('event flags 0', by_name, "event flags 0 should exist")
+        self.assertIn('event flags 1', by_name, "event flags 1 should exist")
+
+    def test_plugin_timer_data(self):
+        """验证定时器数据：名称、周期。"""
+        plugin, context = self._get_plugin()
+        timers = plugin.execute(context)['timers']
+        by_name = {t['name']: t for t in timers if t.get('name')}
+        self.assertEqual(len(timers), 2, f"Expected 2 timers, got {len(timers)}")
+        self.assertIn('timer 0', by_name, "timer 0 should exist")
+        self.assertEqual(by_name['timer 0']['period_ticks'], 10,
+                        "timer 0 period_ticks should be 10")
+        self.assertIn('timer 1', by_name, "timer 1 should exist")
+        self.assertEqual(by_name['timer 1']['period_ticks'], 100,
+                        "timer 1 period_ticks should be 100")
+
+    def test_plugin_block_pool_data(self):
+        """验证块池数据：名称、块大小、总数。"""
+        plugin, context = self._get_plugin()
+        block_pools = plugin.execute(context)['block_pools']
+        by_name = {b['name']: b for b in block_pools if b.get('name')}
+        self.assertGreaterEqual(len(block_pools), 1,
+                               f"Expected at least 1 block pool, got {len(block_pools)}")
+        self.assertIn('block pool 0', by_name, "block pool 0 should exist")
+        self.assertEqual(by_name['block pool 0']['block_size'], 4,
+                        "block pool 0 block_size should be sizeof(ULONG)=4")
+        self.assertEqual(by_name['block pool 0']['total_blocks'], 12,
+                        "block pool 0 total_blocks should be 12")
+
+    def test_plugin_byte_pool_data(self):
+        """验证字节池数据：名称、总大小。"""
+        plugin, context = self._get_plugin()
+        byte_pools = plugin.execute(context)['byte_pools']
+        by_name = {b['name']: b for b in byte_pools if b.get('name')}
+        self.assertGreaterEqual(len(byte_pools), 1,
+                               f"Expected at least 1 byte pool, got {len(byte_pools)}")
+        self.assertIn('byte pool 0', by_name, "byte pool 0 should exist")
+        self.assertEqual(by_name['byte pool 0']['total_bytes'], 9120,
+                        "byte pool 0 total_bytes should be 9120")
+
+    def test_plugin_execute_all_resource_types(self):
+        """验证 execute() 返回所有 8 种资源类型。"""
+        plugin, context = self._get_plugin()
         result = plugin.execute(context)
         self.assertIsInstance(result, dict)
-
-        self.assertIn('tasks', result)
-        self.assertIsInstance(result['tasks'], list)
-
-        self.assertIn('semaphores', result)
-        self.assertIsInstance(result['semaphores'], list)
-
-        self.assertIn('mutexes', result)
-        self.assertIsInstance(result['mutexes'], list)
-
-        self.assertIn('queues', result)
-        self.assertIsInstance(result['queues'], list)
-
-        self.assertIn('events', result)
-        self.assertIsInstance(result['events'], list)
-
-        self.assertIn('timers', result)
-        self.assertIsInstance(result['timers'], list)
-
-        self.assertIn('block_pools', result)
-        self.assertIsInstance(result['block_pools'], list)
-
-        self.assertIn('byte_pools', result)
-        self.assertIsInstance(result['byte_pools'], list)
+        for rt in ['tasks', 'semaphores', 'mutexes', 'queues', 'events',
+                    'timers', 'block_pools', 'byte_pools']:
+            self.assertIn(rt, result, f"execute() should include '{rt}'")
+            self.assertIsInstance(result[rt], list, f"'{rt}' should be a list")
 
 
 if __name__ == '__main__':

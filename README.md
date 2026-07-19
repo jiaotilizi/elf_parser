@@ -344,6 +344,28 @@ See LICENSE file for details.
 
 ## Changelog
 
+### v0.9.9 - 2026-07-20
+
+**测试增强：RTOS 数据准确性验证**
+
+1. **FreeRTOS 场景数据准确性检查**
+   - `mps2_an386_freertos`：新增 8 个数据准确性测试方法，验证任务优先级（Sender=2, Recv=3, Mutex1/2=1 等）、信号量最大计数（xCountSem=10, xBinarySem=1）、队列容量（xQueue1=8, xQueue2=5）、事件组名称、定时器周期（xTimer1=50, xTimer2=100）、资源类型无重叠（semaphores/mutexes/queues 地址互斥）
+   - `mps3_an536_freertos`：新增 6 个数据准确性测试方法，验证无定时器场景（`timers=[]`）及 FreeRTOS 资源类型分离
+
+2. **ThreadX 场景数据准确性检查**
+   - `mps2_an386_threadx`：新增 8 个数据准确性测试方法，验证线程优先级（thread 0=1, thread 1/2=16, thread 3/4=4 等）、栈大小（1024）、信号量/互斥锁/队列/事件组/定时器/块池/字节池的名称和关键参数（队列容量、定时器周期、块池总块数、字节池总字节数）
+   - `mps3_an536_threadx`：新增 8 个数据准确性测试方法，覆盖所有 8 种资源类型
+   - `nxp_imx6ul_threadx`：新增 `_get_plugin()` 辅助方法及 9 个数据准确性测试方法，替换旧的 `test_threadx_plugin_execute` 接口存在性检查，验证队列容量（queue 0=100, queue 1=10）、定时器周期（timer 0=10, timer 1=100）、块池（block_size=4, total_blocks=12）、字节池（total_bytes=9120）等数据值
+
+3. **测试预期值与固件编译结果对齐**
+   - `mps2_an386_threadx`：任务数断言从 10→9（dump 时机 thread 8/9 尚未创建），timer 1 one-shot 定时器不检查 `period_ticks`（过期后为 0）
+   - `mps3_an536_threadx`：timer 1 `period_ticks` 从 50→100（固件实际参数 `100, 100`）
+   - `nxp_imx6ul_threadx`：`total_blocks` 从 25→12（固件编译值与 mps 平台一致）
+
+**测试结果**：5 个 RTOS 场景共 102 个测试全部通过，数据准确性覆盖所有资源类型（tasks/semaphores/mutexes/queues/events/timers/block_pools/byte_pools）
+
+---
+
 ### v0.9.8 - 2026-07-20
 
 **彻底消除名称关键词依赖 — DWARF 类型驱动发现**

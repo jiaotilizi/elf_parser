@@ -197,6 +197,18 @@ class TestQEMUMps2An386FreeRTOSFirmwareAutoParse(unittest.TestCase):
         self.assertIsInstance(tps, list, "g_test_points should be a list")
         self.assertEqual(len(tps), 8, "g_test_points should have 8 slots")
 
+    def _get_plugin(self):
+        """Helper: load and initialize the FreeRTOS plugin."""
+        from plugins.rtos.freertos.freertos_v11p3p0 import FreeRTOSV11Plugin
+        plugin = FreeRTOSV11Plugin()
+        context = {
+            'elf_parser': self.elf_parser,
+            'dump_reader': self.dump_reader,
+            'profile': {},
+        }
+        self.assertTrue(plugin.initialize(context), "Plugin initialize() should return True")
+        return plugin, context
+
     def test_freertos_plugin_loadable(self):
         """FreeRTOS11p0Plugin initializes without exceptions."""
         try:
@@ -216,6 +228,175 @@ class TestQEMUMps2An386FreeRTOSFirmwareAutoParse(unittest.TestCase):
 
         tasks = plugin.get_tasks(context)
         self.assertIsInstance(tasks, list, "get_tasks() should return a list")
+
+    # ========================================================================
+    # 数据准确性检查 — 通过插件 execute() 验证资源的数据值
+    # 基于固件源码 main.c 中的创建参数
+    # ========================================================================
+
+    def test_plugin_task_data(self):
+        """验证任务数据：名称、优先级、数量是否与固件源码一致。"""
+        plugin, context = self._get_plugin()
+        result = plugin.execute(context)
+        tasks = result['tasks']
+
+        # 总任务数：10 个用户任务 + IDLE + Tmr Svc = 12
+        self.assertGreaterEqual(len(tasks), 10,
+                               f"Expected at least 10 tasks, got {len(tasks)}")
+
+        # 按名称建立索引
+        by_name = {t['name']: t for t in tasks if t.get('name')}
+
+        # 验证核心任务存在且优先级正确（来自 main.c 的 xTaskCreate 调用）
+        expected = {
+            'Sender':  2,
+            'Recv':    3,
+            'Mutex1':  1,
+            'Mutex2':  1,
+            'Sem1':    4,
+            'Sem2':    4,
+            'Event1':  5,
+            'Event2':  5,
+            'TimerT':  6,
+            'HighPri': 0,
+        }
+        for name, expected_priority in expected.items():
+            self.assertIn(name, by_name, f"Task '{name}' should exist")
+            self.assertEqual(by_name[name]['priority'], expected_priority,
+                           f"Task '{name}' priority should be {expected_priority}")
+
+        # IDLE task 优先级为 0
+        self.assertIn('IDLE', by_name, "IDLE task should exist")
+
+        # Tmr Svc 优先级为最高（configTIMER_TASK_PRIORITY）
+        self.assertIn('Tmr Svc', by_name, "Tmr Svc task should exist")
+
+        # 所有任务栈大小应 > 0
+        for task in tasks:
+            if task.get('stack_start'):
+                self.assertGreater(task.get('stack_size', 0) + task.get('stack_usage', 0), 0,
+                                 f"Task '{task.get('name')}' should have stack info")
+
+    def test_plugin_semaphore_data(self):
+        """验证信号量数据：名称、最大计数是否与固件源码一致。"""
+        plugin, context = self._get_plugin()
+        result = plugin.execute(context)
+        semaphores = result['semaphores']
+
+        by_name = {s['name']: s for s in semaphores if s.get('name')}
+
+        # xCountSem: counting semaphore, max=10
+        self.assertIn('xCountSem', by_name, "xCountSem should exist")
+        self.assertEqual(by_name['xCountSem']['max_count'], 10,
+                        "xCountSem max_count should be 10")
+
+        # xBinarySem: binary semaphore, max=1
+        self.assertIn('xBinarySem', by_name, "xBinarySem should exist")
+        self.assertEqual(by_name['xBinarySem']['max_count'], 1,
+                        "xBinarySem max_count should be 1")
+
+        # 不应该包含互斥锁（xMutex1/xMutex2 应在 mutexes 中）
+        self.assertNotIn('xMutex1', by_name, "xMutex1 should NOT be in semaphores")
+        self.assertNotIn('xMutex2', by_name, "xMutex2 should NOT be in semaphores")
+
+    def test_plugin_mutex_data(self):
+        """验证互斥锁数据：名称、存在性。"""
+        plugin, context = self._get_plugin()
+        result = plugin.execute(context)
+        mutexes = result['mutexes']
+
+        by_name = {m['name']: m for m in mutexes if m.get('name')}
+
+        self.assertEqual(len(mutexes), 2, f"Expected 2 mutexes, got {len(mutexes)}")
+        self.assertIn('xMutex1', by_name, "xMutex1 should exist")
+        self.assertIn('xMutex2', by_name, "xMutex2 should exist")
+
+        # 互斥锁类型字段
+        for name in ['xMutex1', 'xMutex2']:
+            self.assertEqual(by_name[name].get('type', 'mutex'), 'mutex',
+                           f"{name} should have type 'mutex'")
+
+    def test_plugin_queue_data(self):
+        """验证队列数据：名称、最大消息数。"""
+        plugin, context = self._get_plugin()
+        result = plugin.execute(context)
+        queues = result['queues']
+
+        by_name = {q['name']: q for q in queues if q.get('name')}
+
+        self.assertEqual(len(queues), 2, f"Expected 2 queues, got {len(queues)}")
+
+        # xQueue1: max 8 messages, uint32_t item size
+        self.assertIn('xQueue1', by_name, "xQueue1 should exist")
+        self.assertEqual(by_name['xQueue1']['max_messages'], 8,
+                        "xQueue1 max_messages should be 8")
+        self.assertEqual(by_name['xQueue1']['message_size'], 4,
+                        "xQueue1 message_size should be 4 (uint32_t)")
+
+        # xQueue2: max 5 messages, uint32_t item size
+        self.assertIn('xQueue2', by_name, "xQueue2 should exist")
+        self.assertEqual(by_name['xQueue2']['max_messages'], 5,
+                        "xQueue2 max_messages should be 5")
+        self.assertEqual(by_name['xQueue2']['message_size'], 4,
+                        "xQueue2 message_size should be 4 (uint32_t)")
+
+    def test_plugin_event_data(self):
+        """验证事件组数据：名称、存在性。"""
+        plugin, context = self._get_plugin()
+        result = plugin.execute(context)
+        events = result['events']
+
+        by_name = {e['name']: e for e in events if e.get('name')}
+
+        self.assertEqual(len(events), 2, f"Expected 2 event groups, got {len(events)}")
+        self.assertIn('xEventGrp1', by_name, "xEventGrp1 should exist")
+        self.assertIn('xEventGrp2', by_name, "xEventGrp2 should exist")
+
+    def test_plugin_timer_data(self):
+        """验证定时器数据：名称、周期。"""
+        plugin, context = self._get_plugin()
+        result = plugin.execute(context)
+        timers = result['timers']
+
+        by_name = {t['name']: t for t in timers if t.get('name')}
+
+        self.assertEqual(len(timers), 2, f"Expected 2 timers, got {len(timers)}")
+
+        # xTimer1: period=50 ticks, auto-reload
+        self.assertIn('xTimer1', by_name, "xTimer1 should exist")
+        self.assertEqual(by_name['xTimer1']['period_ticks'], 50,
+                        "xTimer1 period_ticks should be 50")
+
+        # xTimer2: period=100 ticks, auto-reload
+        self.assertIn('xTimer2', by_name, "xTimer2 should exist")
+        self.assertEqual(by_name['xTimer2']['period_ticks'], 100,
+                        "xTimer2 period_ticks should be 100")
+
+    def test_plugin_resource_type_separation(self):
+        """验证资源类型完全分离：semaphores/mutexes/queues/events/timers 无重叠。"""
+        plugin, context = self._get_plugin()
+        result = plugin.execute(context)
+
+        sem_addrs = {s['address'] for s in result['semaphores']}
+        mutex_addrs = {m['address'] for m in result['mutexes']}
+        queue_addrs = {q['address'] for q in result['queues']}
+
+        self.assertTrue(sem_addrs.isdisjoint(mutex_addrs),
+                       "Semaphores and mutexes should have no overlap")
+        self.assertTrue(queue_addrs.isdisjoint(sem_addrs),
+                       "Queues and semaphores should have no overlap")
+        self.assertTrue(queue_addrs.isdisjoint(mutex_addrs),
+                       "Queues and mutexes should have no overlap")
+
+    def test_plugin_execute_all_resource_types(self):
+        """验证 execute() 返回所有 6 种资源类型。"""
+        plugin, context = self._get_plugin()
+        result = plugin.execute(context)
+
+        self.assertIsInstance(result, dict)
+        for rt in ['tasks', 'semaphores', 'mutexes', 'queues', 'timers', 'events']:
+            self.assertIn(rt, result, f"execute() should include '{rt}'")
+            self.assertIsInstance(result[rt], list, f"'{rt}' should be a list")
 
 
 if __name__ == '__main__':

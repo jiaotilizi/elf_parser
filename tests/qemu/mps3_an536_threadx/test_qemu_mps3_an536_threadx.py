@@ -96,6 +96,120 @@ class TestQEMUMps3An536ThreadXFirmwareAutoParse(unittest.TestCase):
     def test_threadx_byte_pool_in_dwarf(self):
         self.assertIsNotNone(self.elf_parser.get_struct_type('TX_BYTE_POOL'), "TX_BYTE_POOL type should exist")
 
+    def _get_plugin(self):
+        """Helper: load and initialize the ThreadX plugin."""
+        from plugins.rtos.threadx.threadx_v6p5p1 import ThreadXV6Plugin
+        plugin = ThreadXV6Plugin()
+        context = {
+            'elf_parser': self.elf_parser,
+            'dump_reader': self.dump_reader,
+            'profile': {},
+        }
+        self.assertTrue(plugin.initialize(context), "Plugin initialize() should return True")
+        return plugin, context
+
+    # ========================================================================
+    # 数据准确性检查 — 通过插件 execute() 验证资源的数据值
+    # 基于 sample_threadx.c 中的 tx_thread_create / tx_queue_create 等参数
+    # ========================================================================
+
+    def test_plugin_task_data(self):
+        """验证线程数据：名称、优先级、数量是否与固件源码一致。"""
+        plugin, context = self._get_plugin()
+        result = plugin.execute(context)
+        tasks = result['tasks']
+
+        self.assertGreaterEqual(len(tasks), 10,
+                               f"Expected at least 10 threads, got {len(tasks)}")
+
+        by_name = {t['name']: t for t in tasks if t.get('name')}
+
+        expected = {
+            'thread 0': 1, 'thread 1': 16, 'thread 2': 16, 'thread 3': 8,
+            'thread 4': 8, 'thread 5': 4, 'thread 6': 8, 'thread 7': 8,
+            'thread 8': 2, 'thread 9': 3,
+        }
+        for name, expected_priority in expected.items():
+            self.assertIn(name, by_name, f"Thread '{name}' should exist")
+            self.assertEqual(by_name[name]['priority'], expected_priority,
+                           f"Thread '{name}' priority should be {expected_priority}")
+
+        self.assertIn('System Timer Thread', by_name, "System Timer Thread should exist")
+
+        for task in tasks:
+            if task.get('name', '').startswith('thread '):
+                self.assertEqual(task.get('stack_size', 0), 1024)
+
+    def test_plugin_semaphore_data(self):
+        plugin, context = self._get_plugin()
+        semaphores = plugin.execute(context)['semaphores']
+        by_name = {s['name']: s for s in semaphores if s.get('name')}
+        self.assertGreaterEqual(len(semaphores), 2)
+        self.assertIn('semaphore 0', by_name)
+        self.assertIn('semaphore 1', by_name)
+
+    def test_plugin_mutex_data(self):
+        plugin, context = self._get_plugin()
+        mutexes = plugin.execute(context)['mutexes']
+        by_name = {m['name']: m for m in mutexes if m.get('name')}
+        self.assertEqual(len(mutexes), 2)
+        self.assertIn('mutex 0', by_name)
+        self.assertIn('mutex 1', by_name)
+
+    def test_plugin_queue_data(self):
+        plugin, context = self._get_plugin()
+        queues = plugin.execute(context)['queues']
+        by_name = {q['name']: q for q in queues if q.get('name')}
+        self.assertEqual(len(queues), 2)
+        self.assertIn('queue 0', by_name)
+        self.assertEqual(by_name['queue 0']['max_messages'], 100)
+        self.assertIn('queue 1', by_name)
+        self.assertEqual(by_name['queue 1']['max_messages'], 10)
+
+    def test_plugin_event_data(self):
+        plugin, context = self._get_plugin()
+        events = plugin.execute(context)['events']
+        by_name = {e['name']: e for e in events if e.get('name')}
+        self.assertGreaterEqual(len(events), 2)
+        self.assertIn('event flags 0', by_name)
+        self.assertIn('event flags 1', by_name)
+
+    def test_plugin_timer_data(self):
+        plugin, context = self._get_plugin()
+        timers = plugin.execute(context)['timers']
+        by_name = {t['name']: t for t in timers if t.get('name')}
+        self.assertEqual(len(timers), 2)
+        self.assertIn('timer 0', by_name)
+        self.assertEqual(by_name['timer 0']['period_ticks'], 10)
+        self.assertIn('timer 1', by_name)
+        self.assertEqual(by_name['timer 1']['period_ticks'], 100)
+
+    def test_plugin_block_pool_data(self):
+        plugin, context = self._get_plugin()
+        block_pools = plugin.execute(context)['block_pools']
+        by_name = {b['name']: b for b in block_pools if b.get('name')}
+        self.assertGreaterEqual(len(block_pools), 1)
+        self.assertIn('block pool 0', by_name)
+        self.assertEqual(by_name['block pool 0']['block_size'], 4)
+        self.assertEqual(by_name['block pool 0']['total_blocks'], 12)
+
+    def test_plugin_byte_pool_data(self):
+        plugin, context = self._get_plugin()
+        byte_pools = plugin.execute(context)['byte_pools']
+        by_name = {b['name']: b for b in byte_pools if b.get('name')}
+        self.assertGreaterEqual(len(byte_pools), 1)
+        self.assertIn('byte pool 0', by_name)
+        self.assertEqual(by_name['byte pool 0']['total_bytes'], 9120)
+
+    def test_plugin_execute_all_resource_types(self):
+        plugin, context = self._get_plugin()
+        result = plugin.execute(context)
+        self.assertIsInstance(result, dict)
+        for rt in ['tasks', 'semaphores', 'mutexes', 'queues', 'events',
+                    'timers', 'block_pools', 'byte_pools']:
+            self.assertIn(rt, result, f"execute() should include '{rt}'")
+            self.assertIsInstance(result[rt], list, f"'{rt}' should be a list")
+
 
 if __name__ == '__main__':
     unittest.main()
