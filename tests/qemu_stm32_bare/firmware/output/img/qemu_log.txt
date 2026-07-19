@@ -1,0 +1,67 @@
+----------------
+IN: Reset_Handler
+0x08000040:  4810       ldr      r0, [pc, #0x40]
+0x08000042:  4685       mov      sp, r0
+0x08000044:  4810       ldr      r0, [pc, #0x40]
+0x08000046:  4911       ldr      r1, [pc, #0x44]
+0x08000048:  4a11       ldr      r2, [pc, #0x44]
+0x0800004a:  2300       movs     r3, #0
+0x0800004c:  e002       b        #0x8000054
+
+----------------
+IN: Reset_Handler
+0x08000054:  18c4       adds     r4, r0, r3
+0x08000056:  428c       cmp      r4, r1
+0x08000058:  d3f9       blo      #0x800004e
+
+----------------
+IN: Reset_Handler
+0x0800004e:  58d4       ldr      r4, [r2, r3]
+0x08000050:  50c4       str      r4, [r0, r3]
+0x08000052:  3304       adds     r3, #4
+0x08000054:  18c4       adds     r4, r0, r3
+0x08000056:  428c       cmp      r4, r1
+0x08000058:  d3f9       blo      #0x800004e
+
+----------------
+IN: Reset_Handler
+0x0800005a:  4a0e       ldr      r2, [pc, #0x38]
+0x0800005c:  4c0e       ldr      r4, [pc, #0x38]
+0x0800005e:  2300       movs     r3, #0
+0x08000060:  e001       b        #0x8000066
+
+----------------
+IN: Reset_Handler
+0x08000066:  42a2       cmp      r2, r4
+0x08000068:  d3fb       blo      #0x8000062
+
+----------------
+IN: Reset_Handler
+0x08000062:  6013       str      r3, [r2]
+0x08000064:  3204       adds     r2, #4
+0x08000066:  42a2       cmp      r2, r4
+0x08000068:  d3fb       blo      #0x8000062
+
+----------------
+IN: Reset_Handler
+0x0800006a:  f000 f873  bl       #0x8000154
+
+----------------
+IN: main
+0x08000154:  b580       push     {r7, lr}
+0x08000156:  af00       add      r7, sp, #0
+0x08000158:  4b13       ldr      r3, [pc, #0x4c]
+0x0800015a:  4a14       ldr      r2, [pc, #0x50]
+0x0800015c:  601a       str      r2, [r3]
+0x0800015e:  4914       ldr      r1, [pc, #0x50]
+0x08000160:  2001       movs     r0, #1
+0x08000162:  f7ff ff9b  bl       #0x800009c
+
+----------------
+IN: main
+0x08000154:  b580       push     {r7, lr}
+
+----------------
+IN: HardFault_Handler
+0x08000072:  e7fe       b        #0x8000072
+
