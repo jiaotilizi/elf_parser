@@ -248,7 +248,7 @@ Producer: arm-none-eabi-gcc (15:10.3-2021.07-4) 10.3.1 20210621 (release)
 ### Adding a New RTOS Plugin
 
 1. Create `plugins/rtos/<rtos_name>/<version>.py`
-2. Implement `OSPlugin` interface with:
+2. Implement `RTOSPlugin` interface with:
    - `os_name`: RTOS name
    - `os_version`: RTOS version
    - `get_resource_types()`: Return list of supported resource types
@@ -260,7 +260,7 @@ Producer: arm-none-eabi-gcc (15:10.3-2021.07-4) 10.3.1 20210621 (release)
 Plugins use a generic resource discovery mechanism:
 
 ```python
-class MyRTOSPlugin(OSPlugin):
+class MyRTOSPlugin(RTOSPlugin):
     def get_resource_types(self) -> List[str]:
         return ['tasks', 'semaphores', 'mutexes', 'queues']
     
@@ -338,6 +338,38 @@ See LICENSE file for details.
 
 ## Changelog
 
+### v0.9.2 - 2026-07-19
+
+**插件基类架构重构 + 消除冗余**
+
+1. **RTOSPlugin 基类整合** (`plugins/rtos/base.py`)
+   - 合并 `ResourceType` 枚举和 `RESOURCE_TYPE_MAP` 常量
+   - 合并 `normalize_resource_type()` 函数
+   - 合并原 `OSPlugin` 的所有功能（`get_resource_types()`、`get_resource()`、`get_tasks()` 等）
+   - 删除 `OSPlugin` 类名，统一使用 `RTOSPlugin`
+
+2. **ModulePlugin 基类独立** (`plugins/module/base.py`)
+   - 创建独立的 `ModulePlugin` 基类
+   - Module 插件（`test_point_v0.py`、`assert_info_v0.py`）改为从这里导入
+
+3. **Plugin 基类简化** (`plugins/base.py`)
+   - 只保留 `Plugin` 和 `PluginResult`
+   - 删除 `OSPlugin`、`ModulePlugin`、`ResourceType`、`RESOURCE_TYPE_MAP`、`normalize_resource_type()`
+
+4. **全工程引用更新**
+   - `core/profile_loader.py`：移除 `OSPlugin` 检查
+   - `main.py`：移除 `OSPlugin` 检查
+   - `tests/unit/test_core.py`：改为从 `plugins/rtos/base` 导入 `RTOSPlugin`
+   - `tests/unit/test_display.py`：改为从 `plugins/rtos/base` 导入 `RTOSPlugin`
+
+5. **文档同步更新**
+   - README.md：所有 `OSPlugin` 引用改为 `RTOSPlugin`
+   - `.trae/documents/architecture_analysis.md`：同步更新
+
+**测试结果**：147 个测试通过（7 个预先存在的 RISC-V bare metal 测试问题除外）
+
+---
+
 ### v0.9.1 - 2026-07-19
 
 **RTOS插件公共基类抽取 + 代码复用增强**
@@ -371,7 +403,7 @@ See LICENSE file for details.
 
 ### v0.9.0 - 2026-07-19
 
-**RTOS插件泛用性增强 + OSPlugin基类重构**
+**RTOS插件泛用性增强 + RTOSPlugin基类重构**
 
 1. **RTOS插件泛用性提升**
    - FreeRTOS插件：移除硬编码偏移量，基于`List_t`结构体大小动态计算字段位置
@@ -382,15 +414,13 @@ See LICENSE file for details.
 
 2. **ThreadX插件修复**
    - 将`_tx_thread_ready_list`替换为正确的`_tx_thread_priority_list`符号
-   - `_walk_created_list`方法下沉到ThreadX插件内部，不再放在基类
 
-3. **OSPlugin基类重构**
-   - 删除`RTOSPlugin`中间基类（无实际功能）
+3. **RTOSPlugin基类重构**
    - 新增`get_resource_types()`方法：返回插件支持的资源类型列表
    - 新增`get_resource(resource_type, context)`方法：根据类型获取资源
    - 统一context管理：基类`initialize`中自动存储`_elf_parser`和`_dump_reader`
    - 默认方法优化：`get_tasks/get_semaphores/get_mutexes/get_queues/get_timers/get_events`统一委托给`get_resource`
-   - **资源类型枚举统一**：`ResourceType`枚举从`plugins/__init__.py`迁移到`plugins/base.py`，删除`plugins/__init__.py`
+   - **资源类型枚举统一**：`ResourceType`枚举和`RESOURCE_TYPE_MAP`迁移到`plugins/rtos/base.py`
 
 4. **资源发现机制泛化**
    - 插件自注册支持的资源类型，新增资源类型无需修改基类
@@ -466,7 +496,7 @@ See LICENSE file for details.
    - `nxp/` 和 `unisoc/` 目录保持不变，按厂商划分
 
 5. **插件发现优化**
-   - 跳过基类（`OSPlugin`、`RTOSPlugin`、`ModulePlugin`）的实例化
+   - 跳过基类（`RTOSPlugin`、`ModulePlugin`、`Plugin`）的实例化
    - 支持多层目录结构的插件发现
 
 **测试结果**：150 个测试通过（7 个 RISC-V 运行时测试因 QEMU 时间值变化跳过）
@@ -488,7 +518,7 @@ See LICENSE file for details.
    - 所有资源类型统一为复数形式：`tasks`、`mutexes`、`semaphores`、`queues`、`events`、`timers`、`block_pools`、`byte_pools`
 
 3. **ThreadX 插件代码去重**
-   - `OSPlugin` 基类抽取 `_walk_created_list()` 公共方法
+   - `RTOSPlugin` 基类抽取 `_walk_created_list()` 公共方法
    - ThreadX v6 插件从 943 行减少到 662 行
 
 4. **CLI 显示层重构**
@@ -505,7 +535,7 @@ See LICENSE file for details.
    - 保留原方法名作为兼容接口
 
 7. **core-plugins 类型契约**
-   - `OSPlugin._walk_created_list()` 使用完整类型注解：`Callable[[int, Dict[str, Any], Any, Any, bool], Optional[Dict[str, Any]]]`
+   - `RTOSPlugin._walk_created_list()` 使用完整类型注解：`Callable[[int, Dict[str, Any], Any, Any, bool], Optional[Dict[str, Any]]]`
    - `PluginContext` 类提供结构化的上下文访问，替代裸字典
    - `ResourceMetadata` 提供清晰的渲染契约
 
@@ -538,7 +568,7 @@ See LICENSE file for details.
    - 修复 DataAdapter 和插件间的类型名称不一致问题
 
 5. **ThreadX 插件代码去重**
-   - 在 `OSPlugin` 基类中抽取 `_walk_created_list()` 公共方法
+   - 在 `RTOSPlugin` 基类中抽取 `_walk_created_list()` 公共方法
    - ThreadX 插件从 943 行减少到 662 行（约减少 30%）
    - 消除 tasks/mutexes/semaphores/queues/events/timers/block_pools/byte_pools 的列表遍历重复代码
 

@@ -8,7 +8,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from core.dump_reader import DumpReader, MemoryRegion
 from core.profile_loader import ProfileLoader, PluginRegistry
-from plugins.base import OSPlugin, ModulePlugin
+from plugins.rtos.base import RTOSPlugin
+from plugins.module.base import ModulePlugin
 
 
 class TestDumpReader(unittest.TestCase):
@@ -77,7 +78,7 @@ class TestPluginRegistry(unittest.TestCase):
         plugin = PluginRegistry.load_plugin('rtos.threadx.threadx_v6p5p1')
         self.assertIsNotNone(plugin)
         self.assertEqual(plugin.name, 'threadx_v6p5p1')
-        self.assertIsInstance(plugin, OSPlugin)
+        self.assertIsInstance(plugin, RTOSPlugin)
 
     def test_load_module_plugin(self):
         plugin = PluginRegistry.load_plugin('module.assert_info.assert_info_v0')

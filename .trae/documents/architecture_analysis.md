@@ -74,8 +74,8 @@ except Exception: pass
 
 ### 3.2 资源类型单复数不一致（隐藏 bug）
 
-- `OSPlugin.execute()` 返回 **复数** key：`{'tasks': [...], 'mutexes': [...]}`
-- `OSPlugin.get_detail()` 用 **单数** 分支：`if resource_type == 'task':`
+- `RTOSPlugin.execute()` 返回 **复数** key：`{'tasks': [...], 'mutexes': [...]}`
+- `RTOSPlugin.get_detail()` 用 **单数** 分支：`if resource_type == 'task':`
 - `DataAdapter` 传入 **复数**：`os_plugin.get_detail('tasks', 0x20001000)`
 
 **结果**：ThreadX 的 if-elif 永远不命中，**详情视图永远返回 None**。

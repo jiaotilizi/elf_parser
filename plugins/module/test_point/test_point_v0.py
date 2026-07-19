@@ -1,5 +1,5 @@
 from typing import Dict, List, Optional, Any
-from plugins.base import ModulePlugin
+from plugins.module.base import ModulePlugin
 
 
 class TestPointPlugin(ModulePlugin):

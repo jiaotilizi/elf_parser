@@ -26,7 +26,7 @@ class PluginRegistry:
             for attr_name in dir(module):
                 attr = getattr(module, attr_name)
                 if isinstance(attr, type) and issubclass(attr, Plugin) and attr != Plugin:
-                    if attr.__name__ in ('OSPlugin', 'RTOSPlugin', 'ModulePlugin', 'Plugin'):
+                    if attr.__name__ in ('RTOSPlugin', 'ModulePlugin', 'Plugin'):
                         continue
                     return attr()
             

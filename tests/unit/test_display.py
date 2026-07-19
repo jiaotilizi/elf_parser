@@ -7,11 +7,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from display.base import ResourceMetadata
 from display.data_adapter import DataAdapter
-from plugins.base import OSPlugin, ModulePlugin
+from plugins.rtos.base import RTOSPlugin
+from plugins.module.base import ModulePlugin
 from typing import Dict, List, Any, Optional
 
 
-class MockOSPlugin(OSPlugin):
+class MockOSPlugin(RTOSPlugin):
     def __init__(self):
         super().__init__(
             name='mock_os',
