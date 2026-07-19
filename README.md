@@ -305,6 +305,44 @@ See LICENSE file for details.
 
 ## Changelog
 
+### v0.4.0 - 2026-07-19
+
+**裸机测试固件全面补齐 + 单元测试覆盖率提升**
+
+1. **补齐 5 个裸机测试场景的固件构建**
+   - `bss_simulated`：新增 [build.sh](file:///Users/yangtao/Documents/elf_parser/tests/bss_simulated/firmware/build.sh)，修复 linker.ld 添加 `ENTRY(main)` 防止 `--gc-sections` 丢弃所有段
+   - `qemu_m4_bare`：新增 [build.sh](file:///Users/yangtao/Documents/elf_parser/tests/qemu_m4_bare/firmware/build.sh)，复用 `_common/test_firmware_bss.c`
+   - `qemu_aarch64_bare`、`qemu_r52_bare`、`qemu_riscv_bare`：修复 `run_qemu.py` 的 `sys.path` 路径（少了一层 `dirname` 导致 `_common` 模块找不到）
+
+2. **修复 run_qemu.py 路径设置**
+   - 4 个裸机场景的 `run_qemu.py` 都存在 `sys.path` 设置错误
+   - 原代码：`_TEST_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))` → 指向 `tests/qemu_xxx_bare/`
+   - 修复后：`_TEST_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))` → 指向 `tests/`
+   - 影响：`qemu_aarch64_bare`、`qemu_r52_bare`、`qemu_riscv_bare`、`qemu_m4_bare`
+
+3. **新增 ELFParser 公开 API 单元测试**
+   - 新文件 [tests/unit/test_elf_parser_api.py](file:///Users/yangtao/Documents/elf_parser/tests/unit/test_elf_parser_api.py)
+   - 覆盖所有 14 个公开方法（18 个测试用例）：
+     - ELF 元信息：`get_elf_header` / `is_32bit` / `get_address_size` / `print_build_info`
+     - 符号查询：`get_symbol_by_name` / `get_all_symbols` / `find_symbols_by_pattern`
+     - 函数查询：`find_function_by_address`（含 CU 缺失时跳过保护）
+     - 类型查询：`get_struct_type`
+     - 自动解析：`parse_struct_auto`（标量、数组、不存在变量）
+     - 内存读取：`read_memory_from_elf` / `read_memory_from_dump` / `parse_struct_from_dump`
+
+4. **bss_simulated 测试用例修复**
+   - `test_elf_header`：原断言 `entry == 0x08000000` 过于严格，改为 `entry 在 FLASH 范围内`
+
+**测试结果**：141 个测试通过（0 失败，1 个跳过）
+- 之前：123 个通过，51 个跳过（缺固件）
+- 现在：141 个通过，1 个跳过（`find_function_by_address` 依赖 DWARF CU 信息）
+
+**覆盖率提升**：
+- 裸机场景从 0% 提升到 100%：bss_simulated、qemu_m4_bare、qemu_aarch64_bare、qemu_r52_bare、qemu_riscv_bare
+- 单元测试新增 18 个 API 覆盖用例
+
+---
+
 ### v0.3.0 - 2026-07-19
 
 **解析器泛用性增强：结构体指针自动解引用**

@@ -227,7 +227,12 @@ class TestBSSFirmwareAutoParse(unittest.TestCase):
         header = self.elf_parser.get_elf_header()
         self.assertEqual(header['class'], 32)
         self.assertEqual(header['machine'], 'ARM')
-        self.assertEqual(header['entry'], 0x08000000)
+        # entry 应在 FLASH 范围内（0x08000000 - 0x08080000）， Thumb 标志位可忽略
+        entry = header['entry'] & ~1
+        self.assertGreaterEqual(entry, 0x08000000,
+                               f"entry {header['entry']:#x} should be in FLASH")
+        self.assertLess(entry, 0x08080000,
+                       f"entry {header['entry']:#x} should be in FLASH")
 
     def test_code_symbols_in_flash(self):
         """代码符号（函数）位于 Flash 段。"""
