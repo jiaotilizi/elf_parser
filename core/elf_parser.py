@@ -358,6 +358,39 @@ class ELFParser:
                 return False
         return False
 
+    def _is_struct_pointer(self, type_info: Optional[Dict[str, Any]]) -> bool:
+        """递归判断一个 pointer 类型是否最终指向 struct/union。
+
+        用于自动解引用 TCB*、TX_THREAD* 等结构体指针，递归展开其字段。
+        """
+        if not type_info:
+            return False
+        ref = type_info.get('ref_type')
+        while ref:
+            kind = ref.get('kind')
+            if kind in ('struct', 'union'):
+                return True
+            elif kind in ('const', 'volatile', 'typedef'):
+                ref = ref.get('ref_type')
+            else:
+                return False
+        return False
+
+    def _unwrap_type(self, type_info: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """剥离 typedef/const/volatile 包装，返回最内层的真实类型。"""
+        if not type_info:
+            return None
+        current = type_info
+        seen = set()
+        while current and id(current) not in seen:
+            kind = current.get('kind')
+            if kind in ('const', 'volatile', 'typedef'):
+                seen.add(id(current))
+                current = current.get('ref_type')
+            else:
+                return current
+        return None
+
     def _parse_const_die(self, die: DIE, die_by_offset: Dict[int, 'DIE'], _depth: int = 0, 
                          _visited: Optional[set] = None) -> Dict[str, Any]:
         info = {
@@ -584,15 +617,55 @@ class ELFParser:
                 raw = dump_reader.read_memory(address, ptr_size)
                 ptr_val = int.from_bytes(raw, 'little') if raw else 0
             hex_width = 16 if ptr_size == 8 else 8
+
+            # 空指针保护：返回 None
+            if ptr_val == 0:
+                return None
+
             # char* → 自动解引用读取字符串
             if self._is_char_pointer(type_info):
-                if ptr_val == 0:
-                    return None
                 try:
                     return dump_reader.read_string(ptr_val)
                 except Exception:
                     return f'<ptr 0x{ptr_val:0{hex_width}x}>'
-            # 其他指针：返回 hex 值
+
+            # struct/union 指针 → 自动解引用并递归展开字段
+            # 例如 TCB_t* / TX_THREAD* 会自动展开为 dict
+            if self._is_struct_pointer(type_info):
+                # 循环引用保护：(解引用地址, 指针类型偏移) 作为访问键
+                type_offset = type_info.get('type_offset')
+                visit_key = None
+                if type_offset is not None:
+                    visit_key = ('deref', ptr_val, type_offset)
+                    if visit_key in _visited:
+                        return {'error': 'circular pointer reference',
+                                'ptr': f'0x{ptr_val:0{hex_width}x}'}
+                    _visited.add(visit_key)
+
+                # 取出最内层的 struct/union 类型信息
+                ref_type = self._unwrap_type(type_info.get('ref_type'))
+                if ref_type is None:
+                    if visit_key is not None:
+                        _visited.discard(visit_key)
+                    return f'<ptr 0x{ptr_val:0{hex_width}x}>'
+
+                # 地址有效性保护：解引用前确认目标地址在 dump 范围内
+                struct_size = ref_type.get('byte_size', 0)
+                if struct_size > 0:
+                    probe = dump_reader.read_memory(ptr_val, min(struct_size, 4))
+                    if probe is None:
+                        if visit_key is not None:
+                            _visited.discard(visit_key)
+                        return {'error': 'invalid pointer address',
+                                'ptr': f'0x{ptr_val:0{hex_width}x}'}
+
+                result = self._read_typed_value(ref_type, ptr_val, dump_reader,
+                                                 depth + 1, _visited)
+                if visit_key is not None:
+                    _visited.discard(visit_key)
+                return result
+
+            # 其他指针（void*, int*, 函数指针等）：返回 hex 字符串
             return f'<ptr 0x{ptr_val:0{hex_width}x}>'
 
         # 数组：逐元素读取
@@ -602,6 +675,18 @@ class ELFParser:
             elem_size = elem_type.get('byte_size', 0) if elem_type else 0
             if not elem_size:
                 return []
+
+            # char 数组（含 const char[]）自动转字符串
+            # 兼容 TCB_t.pcTaskName[16]、TX_THREAD.tx_thread_name[32] 等场景
+            unwrapped_elem = self._unwrap_type(elem_type)
+            if unwrapped_elem and unwrapped_elem.get('kind') == 'base' \
+                    and unwrapped_elem.get('name') == 'char':
+                try:
+                    s = dump_reader.read_string(address, max_length=count)
+                    return s if s is not None else ''
+                except Exception:
+                    pass  # 转字符串失败时降级到逐元素读取
+
             result = []
             for i in range(count):
                 elem_addr = address + i * elem_size

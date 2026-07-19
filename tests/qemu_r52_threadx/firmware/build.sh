@@ -17,9 +17,9 @@ CFLAGS_DEBUG="-mcpu=cortex-r52 -mlittle-endian -mfloat-abi=soft -Wall -Wextra \
         -ffunction-sections -fdata-sections -fno-builtin -nostdlib \
         -g -ggdb3 -O0"
 
-CFLAGS_NODEBUG="-mcpu=cortex-r52 -mlittle-endian -mfloat-abi=soft -Wall -Wextra \
-        -ffunction-sections -fdata-sections -fno-builtin -nostdlib \
-        -O0"
+# ThreadX 内核源码也带 DWARF 调试信息，否则 _tx_thread_current_ptr 等
+# 内核全局变量无法通过 parse_struct_auto 解析类型
+CFLAGS_NODEBUG="${CFLAGS_DEBUG}"
 
 INCLUDES="-I${COMMON_DIR}/inc \
           -I${PORT_DIR}/inc \

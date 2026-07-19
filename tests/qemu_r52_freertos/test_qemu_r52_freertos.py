@@ -57,17 +57,26 @@ class TestQEMUR52FreeRTOSFirmwareAutoParse(unittest.TestCase):
                         "g_rtos_started must be 1 after scheduler start")
 
     def test_pxCurrentTCB_non_null(self):
-        """pxCurrentTCB is non-null after FreeRTOS scheduler starts."""
-        sym = self.elf_parser.get_symbol_by_name('pxCurrentTCB')
-        self.assertIsNotNone(sym, "pxCurrentTCB symbol should exist")
-        pxCurrentTCB = self.dump_reader.read_uint32(sym['address'])
-        self.assertIsNotNone(pxCurrentTCB)
-        self.assertNotEqual(pxCurrentTCB, 0,
+        """pxCurrentTCB is non-null after FreeRTOS scheduler starts.
+
+        使用 parse_struct_auto 自动解引用 TCB_t* 指针，
+        返回 TCB_t 字段的 dict 或 None（空指针时）。
+        """
+        current_tcb = self.elf_parser.parse_struct_auto('pxCurrentTCB', self.dump_reader)
+        self.assertIsNotNone(current_tcb,
                            "pxCurrentTCB must be non-null after scheduler start")
-        self.assertGreaterEqual(pxCurrentTCB, self.RAM_START,
-                               f"pxCurrentTCB {pxCurrentTCB:#x} should be in RAM")
-        self.assertLess(pxCurrentTCB, self.RAM_END,
-                        f"pxCurrentTCB {pxCurrentTCB:#x} should be in RAM")
+        self.assertIsInstance(current_tcb, dict,
+                            "Dereferenced TCB_t should be a dict of fields")
+
+    def test_pxCurrentTCB_tcb_fields(self):
+        """验证 pxCurrentTCB 解引用后能拿到 TCB_t 的关键字段"""
+        current_tcb = self.elf_parser.parse_struct_auto('pxCurrentTCB', self.dump_reader)
+        if current_tcb is None:
+            self.skipTest("pxCurrentTCB is NULL, cannot test TCB fields")
+        self.assertIsInstance(current_tcb, dict)
+        self.assertIn('pxTopOfStack', current_tcb, "TCB_t should have pxTopOfStack")
+        self.assertIn('pcTaskName', current_tcb, "TCB_t should have pcTaskName")
+        self.assertIn('uxPriority', current_tcb, "TCB_t should have uxPriority")
 
     def test_tcb_struct_in_dwarf(self):
         """TCB_t struct type is present in DWARF debug info."""

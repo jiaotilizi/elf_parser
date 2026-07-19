@@ -30,6 +30,7 @@ SOURCES="startup.S main.c libc_stubs.c \
          $RTOS_DIR/tasks.c \
          $RTOS_DIR/queue.c \
          $RTOS_DIR/list.c \
+         $RTOS_DIR/timers.c \
          $RTOS_DIR/event_groups.c \
          $RTOS_DIR/stream_buffer.c \
          $PORT_DIR/port.c \

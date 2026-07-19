@@ -305,6 +305,63 @@ See LICENSE file for details.
 
 ## Changelog
 
+### v0.3.0 - 2026-07-19
+
+**解析器泛用性增强：结构体指针自动解引用**
+
+1. **`_read_typed_value` 指针处理全面升级**
+   - 新增 `_is_struct_pointer()`：递归判断指针最终是否指向 struct/union
+   - 新增 `_unwrap_type()`：剥离 typedef/const/volatile 包装，返回最内层类型
+   - struct/union 指针自动解引用并递归展开字段（如 `TCB_t*`、`TX_THREAD*`）
+   - 空指针统一返回 `None`（含 char*、struct*、void*），便于调用方判空
+   - 循环引用保护：以 `(deref, ptr_val, type_offset)` 为键加入 `_visited`，避免无限递归
+   - 地址有效性保护：解引用前用 `read_memory` 探测目标地址是否在 dump 范围内
+
+2. **char 数组自动转字符串**
+   - `kind == 'array'` 时若元素为 `char`（含 `const char[]`），自动调用 `read_string` 返回字符串
+   - 兼容 `TCB_t.pcTaskName[16]`、`TX_THREAD.tx_thread_name[32]` 等场景
+
+3. **ThreadX 内核源码启用 DWARF 调试信息**
+   - 修改 `tests/qemu_m4_threadx/firmware/build.sh` 和 `tests/qemu_r52_threadx/firmware/build.sh`
+   - `CFLAGS_NODEBUG` 改为等同于 `CFLAGS_DEBUG`，让 ThreadX 内核 .c 文件也带 `-g -ggdb3`
+   - 解决 `_tx_thread_current_ptr`、`_tx_thread_system_state` 等内核全局变量无法通过 `parse_struct_auto` 解析类型的问题
+   - ELF 大小从 ~90KB 增至 ~290KB（M4）/ ~265KB（R52），DWARF 信息更完整
+
+4. **测试用例同步切换到 `parse_struct_auto`**
+   - `qemu_m4_threadx/test_threadx_current_thread_non_null`：从 `get_symbol_by_name + read_uint32` 改为 `parse_struct_auto`，验证返回 dict
+   - 新增 `test_threadx_current_thread_tcb_fields`：验证解引用后能拿到 `tx_thread_name` 等关键字段
+   - `qemu_r52_threadx` 同步上述两个改进测试
+   - `qemu_m4_threadx/test_threadx_system_state_finished`：改用 `parse_struct_auto` 读取标量
+   - `qemu_m4_freertos/test_pxCurrentTCB_non_null`：改为 `parse_struct_auto`，验证返回 dict
+   - 新增 `test_pxCurrentTCB_tcb_fields`：验证解引用后能拿到 `pxTopOfStack`/`pcTaskName`/`uxPriority`
+   - `qemu_r52_freertos` 同步上述改进测试
+
+5. **单元测试补充结构体指针解引用场景**
+   - `test_struct_pointer_auto_deref`：struct 指针自动解引用为 dict
+   - `test_null_struct_pointer_returns_none`：空 struct 指针返回 None
+   - `test_struct_pointer_invalid_address`：无效地址返回错误 dict 而非崩溃
+   - `test_typedef_wrapped_struct_pointer_deref`：typedef 包装的 struct 指针也能解引用
+   - `test_struct_pointer_circular_reference_protection`：循环引用不无限递归
+   - 修改 `test_null_non_char_pointer_returns_hex`：空指针统一返回 None（语义变更）
+   - 新增 `test_non_null_non_char_non_struct_pointer_returns_hex`：非空非 char*/struct* 指针仍返回 hex
+
+**API 行为变更**
+
+| 指针类型 | v0.2.0 行为 | v0.3.0 行为 |
+|---|---|---|
+| `char*` (非空) | 返回字符串 | 返回字符串（不变） |
+| `char*` (空) | 返回 None | 返回 None（不变） |
+| `TX_THREAD*` (非空) | 返回 `'<ptr 0x...>'` 字符串 | **返回 dict（TCB 字段）** |
+| `TX_THREAD*` (空) | 返回 `'<ptr 0x00000000>'` | **返回 None** |
+| `int*` (非空) | 返回 `'<ptr 0x...>'` | 返回 `'<ptr 0x...>'`（不变） |
+| `int*` (空) | 返回 `'<ptr 0x00000000>'` | **返回 None** |
+| `void*` (非空) | 返回 `'<ptr 0x...>'` | 返回 `'<ptr 0x...>'`（不变） |
+| `char[16]` 数组 | 返回 `[72, 101, 108, ...]` 整数列表 | **返回字符串** |
+
+**测试结果**：123 个测试通过（0 失败，51 个跳过因缺固件）
+
+---
+
 ### v0.2.0 - 2026-07-19
 
 **Cortex-R52 跨架构泛用性验证**

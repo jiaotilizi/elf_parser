@@ -31,10 +31,21 @@ class TestQEMUM4ThreadXFirmwareAutoParse(unittest.TestCase):
                              "TX_THREAD type should exist in DWARF")
 
     def test_threadx_current_thread_non_null(self):
-        sym = self.elf_parser.get_symbol_by_name('_tx_thread_current_ptr')
-        self.assertIsNotNone(sym, "_tx_thread_current_ptr symbol should exist")
-        ptr_value = self.dump_reader.read_uint32(sym['address'])
-        self.assertNotEqual(ptr_value, 0, "Current thread pointer should not be NULL")
+        # 使用 parse_struct_auto 自动解引用 TX_THREAD* 指针，返回 dict 或 None
+        current_tcb = self.elf_parser.parse_struct_auto('_tx_thread_current_ptr', self.dump_reader)
+        self.assertIsNotNone(current_tcb, "Current thread pointer should not be NULL")
+        self.assertIsInstance(current_tcb, dict,
+                            "Dereferenced TCB should be a dict of TX_THREAD fields")
+
+    def test_threadx_current_thread_tcb_fields(self):
+        """验证 TCB 指针解引用后能拿到 TX_THREAD 的关键字段"""
+        current_tcb = self.elf_parser.parse_struct_auto('_tx_thread_current_ptr', self.dump_reader)
+        if current_tcb is None:
+            self.skipTest("_tx_thread_current_ptr is NULL, cannot test TCB fields")
+        self.assertIsInstance(current_tcb, dict)
+        # TX_THREAD 必含字段：tx_thread_name (char[32])
+        self.assertIn('tx_thread_name', current_tcb,
+                      "TX_THREAD should have tx_thread_name field")
 
     def test_threadx_created_thread_count(self):
         thread_count = 0
