@@ -31,7 +31,7 @@ def main():
         scenario_dir=SCENARIO_DIR,
         elf_filename='output/img/test_firmware_r52.elf',
         dump_filename='output/img/test_dump_r52.bin',
-        profile_name='test/qemu_r52_bare',
+        profile_name='qemu/r52_bare',
     )
     return show.run()
 

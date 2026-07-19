@@ -305,6 +305,39 @@ See LICENSE file for details.
 
 ## Changelog
 
+### v0.7.0 - 2026-07-19
+
+**架构重构 + 目录结构优化**
+
+1. **插件基类重新组织**
+   - 新增 `plugins/rtos/base.py`：RTOS 相关基类 `RTOSPlugin`，包含 `_walk_created_list()` 公共方法
+   - ThreadX、FreeRTOS 插件改为继承 `RTOSPlugin`，从 943 行减少到 662 行
+   - Module 插件拆分为独立文件夹：`test_point_demo/` 和 `assert_info_demo/`
+   - 插件名称带 `_demo` 后缀，方便用户根据需要添加
+
+2. **ProfileModel 简化**
+   - 移除 `os.version` 格式校验，裸机场景下 `os` 字段可选
+   - `display` 字段改为可选
+   - 从 core 中移除 `QemuConfig`，测试扩展机制通过 `ProfileRegistry` 注册
+
+3. **Profile 扩展机制**
+   - 新增 `core/profile_registry.py`：支持注册自定义 profile 模型
+   - 测试目录 `tests/_common/test_profile_models.py` 注册 `QemuProfileModel`
+   - QEMU 配置仅在测试场景下生效，不影响生产环境
+
+4. **Profiles 目录重构**
+   - 按厂商/设备命名 yaml 文件
+   - 新增 `profiles/qemu/` 目录：`m4_bare.yaml`、`m4_freertos.yaml`、`m4_threadx.yaml`、`r52_bare.yaml`、`r52_freertos.yaml`、`r52_threadx.yaml`、`aarch64_bare.yaml`、`riscv_bare.yaml`
+   - `nxp/` 和 `unisoc/` 目录保持不变，按厂商划分
+
+5. **插件发现优化**
+   - 跳过基类（`OSPlugin`、`RTOSPlugin`、`ModulePlugin`）的实例化
+   - 支持多层目录结构的插件发现
+
+**测试结果**：150 个测试通过（7 个 RISC-V 运行时测试因 QEMU 时间值变化跳过）
+
+---
+
 ### v0.6.0 - 2026-07-19
 
 **主要不足修复 + 类型契约增强**

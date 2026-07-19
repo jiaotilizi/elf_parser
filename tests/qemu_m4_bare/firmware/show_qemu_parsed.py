@@ -35,7 +35,7 @@ def main():
         scenario_dir=SCENARIO_DIR,
         elf_filename='output/img/test_firmware_qemu.elf',
         dump_filename='output/img/test_dump_qemu.bin',
-        profile_name='test/qemu_m4_bare',
+        profile_name='qemu/m4_bare',
     )
     return show.run()
 

@@ -24,7 +24,7 @@ class TestBSSFirmwareAutoParse(unittest.TestCase):
 
         self.elf_parser = ELFParser(self.elf_path)
         profile_loader = ProfileLoader()
-        profile = profile_loader.load_profile('test/bss_simulated')
+        profile = profile_loader.load_profile('bss_simulated')
         regions = profile_loader.get_memory_regions(profile)
         self.dump_reader = DumpReader(self.dump_path, regions)
 

@@ -30,11 +30,11 @@ SCENARIO_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def main():
     loader = ProfileLoader()
-    profile = loader.load_profile('test/qemu_riscv_bare')
+    profile = loader.load_profile('qemu/riscv_bare')
     regions = loader.get_memory_regions(profile)
 
     runner = runner_from_profile(
-        profile_name='test/qemu_riscv_bare',
+        profile_name='qemu/riscv_bare',
         scenario_dir=SCENARIO_DIR,
         elf_filename='output/img/test_firmware_riscv.elf',
         dump_filename='output/img/test_dump_riscv.bin',

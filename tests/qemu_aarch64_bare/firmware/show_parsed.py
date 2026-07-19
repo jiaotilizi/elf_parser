@@ -32,7 +32,7 @@ def main():
         scenario_dir=SCENARIO_DIR,
         elf_filename='output/img/test_firmware_aarch64.elf',
         dump_filename='output/img/test_dump_aarch64.bin',
-        profile_name='test/qemu_aarch64_bare',
+        profile_name='qemu/aarch64_bare',
     )
     return show.run()
 

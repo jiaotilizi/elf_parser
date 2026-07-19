@@ -12,7 +12,7 @@ from _common.show_parsed_base import show_parsed_from_scenario
 def main():
     return show_parsed_from_scenario(
         scenario_dir=os.path.dirname(os.path.abspath(__file__)),
-        profile_name='test/qemu_r52_freertos',
+        profile_name='qemu/r52_freertos',
         elf_filename='output/img/test_firmware_freertos.elf',
         dump_filename='output/img/test_dump_freertos.bin',
     )

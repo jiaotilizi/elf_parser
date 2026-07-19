@@ -33,7 +33,7 @@ def main():
         scenario_dir=SCENARIO_DIR,
         elf_filename='output/img/sample_threadx.elf',
         dump_filename='output/img/threadx_ram_dump.bin',
-        profile_name='test/qemu_r52_threadx',
+        profile_name='qemu/r52_threadx',
     )
     return show.run()
 

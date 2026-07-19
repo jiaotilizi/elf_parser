@@ -1,4 +1,4 @@
-from pydantic import BaseModel, field_validator, ValidationInfo
+from pydantic import BaseModel
 from typing import List, Dict, Optional
 
 
@@ -18,15 +18,6 @@ class MemoryRegionConfig(BaseModel):
 class OSConfig(BaseModel):
     name: str
     version: str
-    
-    @field_validator('version')
-    def validate_version_format(cls, v, info: ValidationInfo):
-        if not v.startswith('v'):
-            raise ValueError(f"OS version must start with 'v', got: {v}")
-        parts = v[1:].split('p')
-        if len(parts) != 3:
-            raise ValueError(f"OS version must be in format 'vMAJORpMINORpPATCH', got: {v}")
-        return v
 
 
 class DisplayOptionsConfig(BaseModel):
@@ -40,27 +31,9 @@ class DisplayConfig(BaseModel):
     options: DisplayOptionsConfig = DisplayOptionsConfig()
 
 
-class QemuConfig(BaseModel):
-    machine: str
-    cpu: Optional[str] = None
-    binary: Optional[str] = None
-    kernel_arg: Optional[str] = None
-    serial: Optional[str] = None
-    monitor: Optional[str] = None
-    qmp: Optional[str] = None
-    timeout: int = 30
-
-
 class ProfileModel(BaseModel):
     chip: ChipConfig
-    os: OSConfig
     memory: List[MemoryRegionConfig]
+    os: Optional[OSConfig] = None
     modules: List[str] = []
-    display: DisplayConfig = DisplayConfig()
-    qemu: Optional[QemuConfig] = None
-    
-    @field_validator('memory')
-    def validate_memory_not_empty(cls, v, info: ValidationInfo):
-        if len(v) == 0:
-            raise ValueError("Profile must have at least one memory region")
-        return v
+    display: Optional[DisplayConfig] = None

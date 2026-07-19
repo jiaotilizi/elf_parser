@@ -125,11 +125,8 @@ class ProfileLoader:
             if 'name' not in profile['chip']:
                 errors.append("Missing 'chip.name'")
         
-        if 'os' not in profile:
-            errors.append("Missing 'os' section")
-        else:
-            if 'name' not in profile['os']:
-                errors.append("Missing 'os.name'")
+        if 'os' in profile and 'name' not in profile['os']:
+            errors.append("Missing 'os.name'")
         
         if 'memory' not in profile:
             errors.append("Missing 'memory' section")

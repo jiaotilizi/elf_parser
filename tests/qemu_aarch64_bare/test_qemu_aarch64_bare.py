@@ -32,7 +32,7 @@ class TestQEMUAArch64FirmwareAutoParse(unittest.TestCase):
 
         self.elf_parser = ELFParser(self.ELF_PATH)
         profile_loader = ProfileLoader()
-        profile = profile_loader.load_profile('test/qemu_aarch64_bare')
+        profile = profile_loader.load_profile('qemu/aarch64_bare')
         regions = profile_loader.get_memory_regions(profile)
         self.dump_reader = DumpReader(self.DUMP_PATH, regions)
 

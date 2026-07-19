@@ -3,10 +3,10 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from typing import Dict, List, Optional, Any
-from core.plugin_manager import OSPlugin
+from plugins.rtos.base import RTOSPlugin
 
 
-class FreeRTOSV11Plugin(OSPlugin):
+class FreeRTOSV11Plugin(RTOSPlugin):
     def __init__(self):
         super().__init__(
             name='freertos_v11p3p0',

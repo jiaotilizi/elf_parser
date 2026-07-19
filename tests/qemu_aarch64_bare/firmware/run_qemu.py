@@ -21,7 +21,7 @@ SCENARIO_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def main():
     runner = runner_from_profile(
-        profile_name='test/qemu_aarch64_bare',
+        profile_name='qemu/aarch64_bare',
         scenario_dir=SCENARIO_DIR,
         elf_filename='output/img/test_firmware_aarch64.elf',
         dump_filename='output/img/test_dump_aarch64.bin',

@@ -17,7 +17,7 @@ SCENARIO_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def main():
     runner = runner_from_profile(
-        profile_name='test/qemu_r52_freertos',
+        profile_name='qemu/r52_freertos',
         scenario_dir=SCENARIO_DIR,
         elf_filename='output/img/test_firmware_freertos.elf',
         dump_filename='output/img/test_dump_freertos.bin',

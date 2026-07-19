@@ -17,7 +17,7 @@ SCENARIO_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def main():
     runner = runner_from_profile(
-        profile_name='test/qemu_m4_threadx',
+        profile_name='qemu/m4_threadx',
         scenario_dir=SCENARIO_DIR,
         elf_filename='output/img/sample_threadx.elf',
         dump_filename='output/img/threadx_ram_dump.bin',

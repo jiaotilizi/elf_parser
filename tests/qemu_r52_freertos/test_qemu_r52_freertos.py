@@ -34,7 +34,7 @@ class TestQEMUR52FreeRTOSFirmwareAutoParse(unittest.TestCase):
 
         self.elf_parser = ELFParser(self.ELF_PATH)
         profile_loader = ProfileLoader()
-        profile = profile_loader.load_profile('test/qemu_r52_freertos')
+        profile = profile_loader.load_profile('qemu/r52_freertos')
         regions = profile_loader.get_memory_regions(profile)
         self.dump_reader = DumpReader(self.DUMP_PATH, regions)
 

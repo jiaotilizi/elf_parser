@@ -20,7 +20,7 @@ class TestQEMUM4ThreadXFirmwareAutoParse(unittest.TestCase):
         assert os.path.exists(cls.dump_path), f"Dump not found: {cls.dump_path}"
 
         loader = ProfileLoader()
-        profile = loader.load_profile('test/qemu_m4_threadx')
+        profile = loader.load_profile('qemu/m4_threadx')
         regions = loader.get_memory_regions(profile)
 
         cls.elf_parser = ELFParser(cls.elf_path)

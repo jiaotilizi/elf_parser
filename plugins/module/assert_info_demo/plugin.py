@@ -2,10 +2,10 @@ from typing import Dict, List, Optional, Any
 from core.plugin_manager import ModulePlugin
 
 
-class AssertInfoPlugin(ModulePlugin):
+class AssertInfoPluginDemo(ModulePlugin):
     def __init__(self):
         super().__init__(
-            name='assert_info',
+            name='assert_info_demo',
             version='1.0',
             module_type='assert',
             description='Parse assertion information from global variable structures'

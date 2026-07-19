@@ -82,8 +82,8 @@ class TestPluginManager(unittest.TestCase):
         pm.discover_plugins()
 
         self.assertGreater(len(pm.plugins), 0)
-        self.assertIn('assert_info', pm.plugins)
-        self.assertIn('test_point', pm.plugins)
+        self.assertIn('assert_info_demo', pm.plugins)
+        self.assertIn('test_point_demo', pm.plugins)
         self.assertIn('threadx_v5p6p0', pm.os_plugins)
         self.assertIn('freertos_v11p3p0', pm.os_plugins)
 
@@ -103,9 +103,9 @@ class TestPluginManager(unittest.TestCase):
         pm = PluginManager()
         pm.discover_plugins()
 
-        plugin = pm.get_module_plugin('assert_info')
+        plugin = pm.get_module_plugin('assert_info_demo')
         self.assertIsNotNone(plugin)
-        self.assertEqual(plugin.name, 'assert_info')
+        self.assertEqual(plugin.name, 'assert_info_demo')
 
 
 class TestProfileLoader(unittest.TestCase):
@@ -118,8 +118,8 @@ class TestProfileLoader(unittest.TestCase):
         profile_names = [p['name'] for p in profiles]
         self.assertIn('nxp/demo_chip', profile_names)
         self.assertIn('unisoc/S6', profile_names)
-        self.assertIn('test/bss_simulated', profile_names)
-        self.assertIn('test/qemu_m4_bare', profile_names)
+        self.assertIn('bss_simulated', profile_names)
+        self.assertIn('qemu/m4_bare', profile_names)
 
     def test_load_profile(self):
         loader = ProfileLoader()
@@ -132,7 +132,7 @@ class TestProfileLoader(unittest.TestCase):
 
     def test_load_bss_simulated_profile(self):
         loader = ProfileLoader()
-        profile = loader.load_profile('test/bss_simulated')
+        profile = loader.load_profile('bss_simulated')
 
         self.assertIsNotNone(profile)
         self.assertEqual(profile['chip']['name'], 'bss_simulated')
@@ -141,7 +141,7 @@ class TestProfileLoader(unittest.TestCase):
 
     def test_load_qemu_m4_bare_profile(self):
         loader = ProfileLoader()
-        profile = loader.load_profile('test/qemu_m4_bare')
+        profile = loader.load_profile('qemu/m4_bare')
 
         self.assertIsNotNone(profile)
         self.assertEqual(profile['chip']['name'], 'qemu_m4_bare')

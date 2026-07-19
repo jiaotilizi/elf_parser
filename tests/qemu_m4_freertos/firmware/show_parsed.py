@@ -33,7 +33,7 @@ def main():
         scenario_dir=SCENARIO_DIR,
         elf_filename='output/img/test_firmware_freertos.elf',
         dump_filename='output/img/test_dump_freertos.bin',
-        profile_name='test/qemu_m4_freertos',
+        profile_name='qemu/m4_freertos',
     )
     return show.run()
 

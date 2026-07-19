@@ -35,7 +35,7 @@ class TestQEMUFirmwareAutoParse(unittest.TestCase):
 
         self.elf_parser = ELFParser(self.ELF_PATH)
         profile_loader = ProfileLoader()
-        profile = profile_loader.load_profile('test/qemu_m4_bare')
+        profile = profile_loader.load_profile('qemu/m4_bare')
         regions = profile_loader.get_memory_regions(profile)
         self.dump_reader = DumpReader(self.DUMP_PATH, regions)
 

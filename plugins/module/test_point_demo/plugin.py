@@ -2,10 +2,10 @@ from typing import Dict, List, Optional, Any
 from core.plugin_manager import ModulePlugin
 
 
-class TestPointPlugin(ModulePlugin):
+class TestPointPluginDemo(ModulePlugin):
     def __init__(self):
         super().__init__(
-            name='test_point',
+            name='test_point_demo',
             version='1.0',
             module_type='test',
             description='Parse test point/trace information from global variable structures'

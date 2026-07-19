@@ -34,7 +34,7 @@ def main():
         scenario_dir=SCENARIO_DIR,
         elf_filename='test_firmware_bss.elf',
         dump_filename='test_dump_bss.bin',
-        profile_name='test/bss_simulated',
+        profile_name='bss_simulated',
     )
     return show.run()
 

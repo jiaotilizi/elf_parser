@@ -31,7 +31,7 @@ def main():
         scenario_dir=SCENARIO_DIR,
         elf_filename='output/img/test_firmware_riscv.elf',
         dump_filename='output/img/test_dump_riscv.bin',
-        profile_name='test/qemu_riscv_bare',
+        profile_name='qemu/riscv_bare',
     )
     return show.run()
 

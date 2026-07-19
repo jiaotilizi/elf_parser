@@ -26,7 +26,7 @@ from _common.qemu_runner import runner_from_profile
 SCENARIO_DIR = os.path.dirname(os.path.abspath(__file__))
 ELF_FILENAME = 'output/img/test_firmware_qemu.elf'
 DUMP_FILENAME = 'output/img/test_dump_qemu.bin'
-PROFILE_NAME = 'test/qemu_m4_bare'
+PROFILE_NAME = 'qemu/m4_bare'
 
 
 def main():
