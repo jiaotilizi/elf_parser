@@ -6,6 +6,16 @@ from plugins.base import Plugin
 
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# FreeRTOS List_t 结构体布局常量
+# 这些值源于 FreeRTOS 内核源码中 ListItem_t / MiniListItem_t 的固定布局
+# ============================================================================
+
+# MiniListItem_t 中 pxNext 的偏移量（MiniListItem_t 只有 xItemValue 和 pxNext 两个字段）
+#   TickType_t xItemValue;  // offset 0
+#   ListItem_t *pxNext;     // offset 4
+_FREERTOS_LIST_ITEM_PX_NEXT_OFFSET = 4
+
 
 class ResourceType(str, Enum):
     TASKS = 'tasks'
@@ -229,14 +239,20 @@ class RTOSPlugin(Plugin):
             logger.warning("List_t struct type not found")
             return []
 
-        list_item_offset = self._find_member_offset(list_struct_type, 'pxIndex', 4)
-
-        first_item_addr = dump_reader.read_pointer(list_addr + list_item_offset, is_32bit)
-        if not first_item_addr:
-            return []
+        # In FreeRTOS List_t, xListEnd is the sentinel anchor at offset 8.
+        # pxIndex (offset 4) is a scheduling hint used for round-robin,
+        # not the list head. The correct traversal starts from xListEnd.pxNext
+        # (offset 12 within List_t = offset 4 within MiniListItem_t).
+        xlist_end_offset = self._find_member_offset(list_struct_type, 'xListEnd', 8)
+        xlist_end_addr = list_addr + xlist_end_offset
 
         if list_end_addr is None:
-            list_end_addr = list_addr + list_item_offset + 4
+            list_end_addr = xlist_end_addr
+
+        # Read xListEnd.pxNext (offset 4 within MiniListItem_t)
+        first_item_addr = dump_reader.read_pointer(xlist_end_addr + 4, is_32bit)
+        if not first_item_addr:
+            return []
 
         if first_item_addr == list_end_addr:
             return []
@@ -259,10 +275,10 @@ class RTOSPlugin(Plugin):
             if item_info:
                 results.append(item_info)
 
-            next_offset = 4
+            next_offset = _FREERTOS_LIST_ITEM_PX_NEXT_OFFSET
             list_item_struct = elf_parser.get_struct_type('ListItem_t')
             if list_item_struct:
-                next_offset = self._find_member_offset(list_item_struct, 'pxNext', 4)
+                next_offset = self._find_member_offset(list_item_struct, 'pxNext', _FREERTOS_LIST_ITEM_PX_NEXT_OFFSET)
 
             next_ptr = dump_reader.read_pointer(current_ptr + next_offset, is_32bit)
             current_ptr = next_ptr

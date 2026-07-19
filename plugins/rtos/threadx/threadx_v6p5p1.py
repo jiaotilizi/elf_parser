@@ -6,6 +6,29 @@ from ..base import RTOSPlugin
 
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# ThreadX v6 内核常量（基于源码中结构体固定布局）
+# 这些值源于 ThreadX 内核源码中的结构体定义，不是任意魔术值。
+# 当 DWARF 类型信息可用时，优先使用 DWARF 推导的偏移量；
+# 这些常量仅作为 DWARF 缺失时的回退。
+# ============================================================================
+
+# TX_TIMER_INTERNAL 结构体成员偏移量（基于 ThreadX 内核源码）
+# 结构体布局（32 位）：
+#   ULONG tx_timer_internal_remaining_ticks;        // offset 0
+#   ULONG tx_timer_internal_re_initialize_ticks;    // offset 4
+#   void (*tx_timer_internal_timeout_function)(ULONG); // offset 8
+#   ULONG tx_timer_internal_timeout_param;          // offset 12
+#   TX_TIMER_INTERNAL *tx_timer_internal_active_next; // offset 16
+_TX_TIMER_INTERNAL_REMAINING_TICKS_OFF = 0
+_TX_TIMER_INTERNAL_RE_INITIALIZE_TICKS_OFF = 4
+_TX_TIMER_INTERNAL_TIMEOUT_FUNCTION_OFF = 8
+_TX_TIMER_INTERNAL_TIMEOUT_PARAM_OFF = 12
+_TX_TIMER_INTERNAL_ACTIVE_NEXT_OFF = 16
+
+# ThreadX 信号量最大计数值（ThreadX 计数信号量无固定上限）
+_TX_SEMAPHORE_MAX_COUNT = 0xFFFFFFFF
+
 
 class ThreadXV6Plugin(RTOSPlugin):
     def __init__(self):
@@ -81,7 +104,13 @@ class ThreadXV6Plugin(RTOSPlugin):
                 ready_list_sym = elf_parser.get_symbol_by_name('_tx_thread_priority_list')
                 if ready_list_sym:
                     ready_list_addr = ready_list_sym['address']
-                    for priority in range(32):
+                    ptr_size = 4 if elf_parser.is_32bit() else 8
+                    priority_list_size = ready_list_sym.get('size', 0)
+                    if priority_list_size > 0:
+                        max_priorities = priority_list_size // ptr_size
+                    else:
+                        max_priorities = 0
+                    for priority in range(max_priorities):
                         head_addr = ready_list_addr + priority * 4
                         head = dump_reader.read_uint32(head_addr)
                         if head != 0:
@@ -232,8 +261,8 @@ class ThreadXV6Plugin(RTOSPlugin):
                 result['name'] = self._read_resource_name(sem_addr, sem_addr + member_offset, is_32bit)
             
             elif member_name == 'tx_semaphore_count':
-                result['count'] = dump_reader.read_uint32(sem_addr + member_offset)
-                result['max_count'] = 0
+                result['count'] = dump_reader.read_uint32(sem_addr + member_offset) or 0
+                result['max_count'] = _TX_SEMAPHORE_MAX_COUNT  # ThreadX 计数信号量无固定上限
             
             elif member_name == 'tx_semaphore_suspended_count':
                 result['suspended_count'] = dump_reader.read_uint32(sem_addr + member_offset)
@@ -405,12 +434,27 @@ class ThreadXV6Plugin(RTOSPlugin):
                 internal_ptr = timer_addr + member_offset
         
         if internal_ptr:
-            result['ticks_remaining'] = dump_reader.read_uint32(internal_ptr + 0) or 0
-            result['period_ticks'] = dump_reader.read_uint32(internal_ptr + 4) or 0
-            result['expiration_function'] = dump_reader.read_pointer_or_zero(internal_ptr + 8, is_32bit)
-            result['expiration_param'] = dump_reader.read_uint32(internal_ptr + 12) or 0
+            timer_internal_struct = elf_parser.get_struct_type('TX_TIMER_INTERNAL')
+            if timer_internal_struct:
+                ticks_remaining_off = self._find_member_offset(timer_internal_struct, 'tx_timer_internal_remaining_ticks', _TX_TIMER_INTERNAL_REMAINING_TICKS_OFF)
+                period_ticks_off = self._find_member_offset(timer_internal_struct, 'tx_timer_internal_re_initialize_ticks', _TX_TIMER_INTERNAL_RE_INITIALIZE_TICKS_OFF)
+                exp_func_off = self._find_member_offset(timer_internal_struct, 'tx_timer_internal_timeout_function', _TX_TIMER_INTERNAL_TIMEOUT_FUNCTION_OFF)
+                exp_param_off = self._find_member_offset(timer_internal_struct, 'tx_timer_internal_timeout_param', _TX_TIMER_INTERNAL_TIMEOUT_PARAM_OFF)
+                active_next_off = self._find_member_offset(timer_internal_struct, 'tx_timer_internal_active_next', _TX_TIMER_INTERNAL_ACTIVE_NEXT_OFF)
+            else:
+                # TX_TIMER_INTERNAL not in DWARF; use ThreadX kernel source layout
+                ticks_remaining_off = _TX_TIMER_INTERNAL_REMAINING_TICKS_OFF
+                period_ticks_off = _TX_TIMER_INTERNAL_RE_INITIALIZE_TICKS_OFF
+                exp_func_off = _TX_TIMER_INTERNAL_TIMEOUT_FUNCTION_OFF
+                exp_param_off = _TX_TIMER_INTERNAL_TIMEOUT_PARAM_OFF
+                active_next_off = _TX_TIMER_INTERNAL_ACTIVE_NEXT_OFF
             
-            active_next = dump_reader.read_pointer(internal_ptr + 16, is_32bit)
+            result['ticks_remaining'] = dump_reader.read_uint32(internal_ptr + ticks_remaining_off) or 0
+            result['period_ticks'] = dump_reader.read_uint32(internal_ptr + period_ticks_off) or 0
+            result['expiration_function'] = dump_reader.read_pointer_or_zero(internal_ptr + exp_func_off, is_32bit)
+            result['expiration_param'] = dump_reader.read_uint32(internal_ptr + exp_param_off) or 0
+            
+            active_next = dump_reader.read_pointer(internal_ptr + active_next_off, is_32bit)
             result['active'] = active_next != 0 and active_next is not None
             result['state_name'] = 'ACTIVE' if result['active'] else 'INACTIVE'
         

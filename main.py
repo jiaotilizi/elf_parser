@@ -92,17 +92,15 @@ def analyze(elf_path: str, dump_path: str, profile_name: str) -> dict:
     if keywords:
         print(f"Running keyword matching for profile: {', '.join(keywords)}")
         
-        elf_unmatched = elf_parser.match_keywords(keywords)
-        dump_unmatched = dump_reader.match_keywords(keywords)
+        elf_unmatched = set(elf_parser.match_keywords(keywords))
+        dump_unmatched = set(dump_reader.match_keywords(keywords))
         
-        all_unmatched = elf_unmatched + dump_unmatched
+        all_unmatched = elf_unmatched & dump_unmatched
         if all_unmatched:
             print(f"Keyword match failed:")
-            if elf_unmatched:
-                print(f"  ELF unmatched: {', '.join(elf_unmatched)}")
-            if dump_unmatched:
-                print(f"  Dump unmatched: {', '.join(dump_unmatched)}")
-            raise ValueError(f"Profile/ELF/Dump mismatch: {len(all_unmatched)} keywords not found")
+            if all_unmatched:
+                print(f"  Unmatched in both ELF and Dump: {', '.join(sorted(all_unmatched))}")
+            raise ValueError(f"Profile/ELF/Dump mismatch: {len(all_unmatched)} keywords not found in either ELF or dump")
     
     print(f"Loading plugins from profile...")
     plugins = profile_loader.load_plugins_from_profile(profile)

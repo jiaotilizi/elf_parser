@@ -344,6 +344,38 @@ See LICENSE file for details.
 
 ## Changelog
 
+### v0.9.7 - 2026-07-20
+
+**消除特例化处理 — 泛用性增强**
+
+1. **FreeRTOS v11 插件特例消除**
+   - 新增 `_get_config_max_priorities()` 方法：从 `pxReadyTasksLists` ELF 符号大小推导 `configMAX_PRIORITIES`（`symbol_size / sizeof(List_t)`），替代硬编码的 32 级优先级
+   - 移除 `uxTopUsedPriority` ELF 回退（读取 BSS 初始值=0 无意义）
+   - 移除 `MAX_REASONABLE_LIST_ITEMS = 255` 任意阈值，依赖 `_walk_doubly_linked_list` 的 `visited` 集合防止循环遍历
+   - 移除 `tcb_addr < 0x10000` 架构特定地址检查，改用 `dump_reader.get_memory_region()` 通用地址验证
+   - 移除 semaphore/mutex/queue 解析中的魔术值（65535/0xFFFFFFFF）修正逻辑
+   - 移除 `period_ticks > 1000000` 任意阈值，如实报告原始值
+   - 移除定时器名称过滤（`if not timer_info['name']`），如实报告所有定时器
+   - `_parse_timer_list` 中 `timer_addr = current_ptr - 4` 改为从 DWARF 获取 `xTimerListItem` 偏移量
+
+2. **ThreadX v6 插件特例消除**
+   - 移除信号量计数 `> 0xFFFF` 阈值检查，如实报告原始值
+   - 优先级范围从硬编码 `range(32)` 改为从 `_tx_thread_priority_list` 符号大小动态推导
+   - `TX_TIMER_INTERNAL` 偏移量优先从 DWARF 获取，缺失时以内核源码布局回退
+
+3. **模块级常量提取（按用户要求）**
+   - FreeRTOS v11 提取 5 个常量：`_FREERTOS_MAX_TASK_NAME_LEN`、`_FREERTOS_QUEUE_DEF_HEADER_SIZE`、`_FREERTOS_QUEUE_DEF_LIST_COUNT`、`_FREERTOS_MUTEX_HOLDER_OFFSET_FROM_MESSAGES`、`_FREERTOS_PC_OFFSET_IN_STACK_FRAME`
+   - ThreadX v6 提取 6 个常量：`_TX_TIMER_INTERNAL_*_OFF` 系列、`_TX_SEMAPHORE_MAX_COUNT`
+   - base.py 提取 `_FREERTOS_LIST_ITEM_PX_NEXT_OFFSET` 常量
+   - 所有常量附带内核源码结构注释，便于后续跨架构调整
+
+4. **Keyword 匹配逻辑优化**
+   - `main.py` 中 keyword 匹配从 OR 逻辑改为 AND 逻辑：只有当 keyword 在 ELF 和 dump 中都未匹配时才报错，提高匹配鲁棒性
+
+**测试结果**：5 个 RTOS 场景 display 验证通过（FreeRTOS: mps2_an386/mps3_an536, ThreadX: mps2_an386/mps3_an536/nxp_imx6ul）
+
+---
+
 ### v0.9.6 - 2026-07-19
 
 **工程质量优化：架构改进、代码质量提升、性能优化**
