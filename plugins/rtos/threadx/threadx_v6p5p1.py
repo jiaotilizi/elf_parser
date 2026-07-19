@@ -3,10 +3,10 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from typing import Dict, List, Optional, Any
-from plugins.base import OSPlugin, normalize_resource_type
+from plugins.rtos.base import RTOSPlugin
 
 
-class ThreadXV6Plugin(OSPlugin):
+class ThreadXV6Plugin(RTOSPlugin):
     def __init__(self):
         super().__init__(
             name='threadx_v6p5p1',
@@ -15,65 +15,6 @@ class ThreadXV6Plugin(OSPlugin):
             os_version='v6p5p1',
             description='ThreadX v6p5p1 RTOS analysis plugin'
         )
-    
-    def _walk_created_list(self, 
-                          symbol_name: str, 
-                          struct_name: str, 
-                          next_field_name: str,
-                          parse_func,
-                          context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        import logging
-        logger = logging.getLogger(__name__)
-        
-        elf_parser = context.get('elf_parser')
-        dump_reader = context.get('dump_reader')
-        
-        if not elf_parser or not dump_reader:
-            logger.warning(f"Missing elf_parser or dump_reader in context for {symbol_name}")
-            return []
-        
-        list_sym = elf_parser.get_symbol_by_name(symbol_name)
-        if not list_sym:
-            logger.warning(f"Symbol not found: {symbol_name}")
-            return []
-        
-        list_addr = list_sym['address']
-        is_32bit = elf_parser.is_32bit()
-        
-        struct_type = elf_parser.get_struct_type(struct_name)
-        if not struct_type:
-            logger.warning(f"Struct type not found: {struct_name}")
-            return []
-        
-        head_ptr = dump_reader.read_pointer(list_addr, is_32bit)
-        if not head_ptr:
-            return []
-        
-        next_offset = 0
-        for member in struct_type.get('members', []):
-            if member.get('name') == next_field_name:
-                next_offset = member.get('offset', 0)
-                break
-        
-        visited = set()
-        current_ptr = head_ptr
-        results = []
-        
-        while current_ptr and current_ptr not in visited:
-            visited.add(current_ptr)
-            
-            item_info = parse_func(current_ptr, struct_type, elf_parser, dump_reader, is_32bit)
-            if item_info:
-                results.append(item_info)
-            
-            next_ptr = dump_reader.read_pointer(current_ptr + next_offset, is_32bit)
-            current_ptr = next_ptr
-        
-        return results
-    
-    def initialize(self, context: Dict[str, Any]) -> bool:
-        super().initialize(context)
-        return True
     
     def get_resource_types(self) -> List[str]:
         return ['tasks', 'semaphores', 'mutexes', 'queues', 'events', 'timers', 'block_pools', 'byte_pools']
@@ -121,7 +62,7 @@ class ThreadXV6Plugin(OSPlugin):
         ]
     
     def _get_tasks(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        tasks = self._walk_created_list(
+        tasks = self._walk_singly_linked_list(
             '_tx_thread_created_ptr',
             'TX_THREAD',
             'tx_thread_created_next',
@@ -213,7 +154,7 @@ class ThreadXV6Plugin(OSPlugin):
             
             elif member_name == 'tx_thread_state':
                 result['state'] = dump_reader.read_uint32(thread_addr + member_offset)
-                result['state_name'] = THREAD_STATE_MAP.get(result['state'], f'UNKNOWN({result["state"]})')
+                result['state_name'] = self._normalize_task_state(result['state'], THREAD_STATE_MAP)
             
             elif member_name == 'tx_thread_priority':
                 result['priority'] = dump_reader.read_uint32(thread_addr + member_offset)
@@ -248,13 +189,12 @@ class ThreadXV6Plugin(OSPlugin):
             elif member_name == 'tx_thread_timeout_parameter':
                 result['timeout_param'] = dump_reader.read_pointer_or_zero(thread_addr + member_offset, is_32bit)
         
-        if result['stack_start'] and result['stack_size']:
-            if result['stack_highest_ptr'] and result['stack_highest_ptr'] != 0:
-                result['stack_usage'] = (result['stack_highest_ptr'] - result['stack_start']) / result['stack_size'] * 100
-            elif result['stack_current']:
-                result['stack_usage'] = (result['stack_current'] - result['stack_start']) / result['stack_size'] * 100
-            else:
-                result['stack_usage'] = 0.0
+        result['stack_usage'] = self._calculate_stack_usage_highest(
+            result['stack_start'],
+            result['stack_size'],
+            result['stack_highest_ptr'],
+            result['stack_current']
+        )
         
         if result['entry_point']:
             func_info = elf_parser.find_function_by_address(result['entry_point'])
@@ -264,7 +204,7 @@ class ThreadXV6Plugin(OSPlugin):
         return result
     
     def _get_semaphores(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return self._walk_created_list(
+        return self._walk_singly_linked_list(
             '_tx_semaphore_created_ptr',
             'TX_SEMAPHORE',
             'tx_semaphore_created_next',
@@ -313,7 +253,7 @@ class ThreadXV6Plugin(OSPlugin):
         return result
     
     def _get_mutexes(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return self._walk_created_list(
+        return self._walk_singly_linked_list(
             '_tx_mutex_created_ptr',
             'TX_MUTEX',
             'tx_mutex_created_next',
@@ -379,7 +319,7 @@ class ThreadXV6Plugin(OSPlugin):
         return result
     
     def _get_queues(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return self._walk_created_list(
+        return self._walk_singly_linked_list(
             '_tx_queue_created_ptr',
             'TX_QUEUE',
             'tx_queue_created_next',
@@ -434,7 +374,7 @@ class ThreadXV6Plugin(OSPlugin):
         return result
     
     def _get_events(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return self._walk_created_list(
+        return self._walk_singly_linked_list(
             '_tx_event_flags_created_ptr',
             'TX_EVENT_FLAGS_GROUP',
             'tx_event_flags_group_created_next',
@@ -481,7 +421,7 @@ class ThreadXV6Plugin(OSPlugin):
         return result
     
     def _get_timers(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return self._walk_created_list(
+        return self._walk_singly_linked_list(
             '_tx_timer_created_ptr',
             'TX_TIMER',
             'tx_timer_created_next',
@@ -544,7 +484,7 @@ class ThreadXV6Plugin(OSPlugin):
         return result
     
     def _get_block_pools(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return self._walk_created_list(
+        return self._walk_singly_linked_list(
             '_tx_block_pool_created_ptr',
             'TX_BLOCK_POOL',
             'tx_block_pool_created_next',
@@ -595,7 +535,7 @@ class ThreadXV6Plugin(OSPlugin):
         return result
     
     def _get_byte_pools(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return self._walk_created_list(
+        return self._walk_singly_linked_list(
             '_tx_byte_pool_created_ptr',
             'TX_BYTE_POOL',
             'tx_byte_pool_created_next',
@@ -701,7 +641,7 @@ class ThreadXV6Plugin(OSPlugin):
         if not self._context:
             return None
         
-        resource_type = normalize_resource_type(resource_type)
+        resource_type = self._normalize_resource_type(resource_type)
         resources = self.get_resource(resource_type, self._context)
         
         for resource in resources:

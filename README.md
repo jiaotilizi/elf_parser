@@ -338,6 +338,37 @@ See LICENSE file for details.
 
 ## Changelog
 
+### v0.9.1 - 2026-07-19
+
+**RTOS插件公共基类抽取 + 代码复用增强**
+
+1. **新建 RTOSPlugin 基类** (`plugins/rtos/base.py`)
+   - `_find_member_offset()`：通用结构体成员偏移查找，替代各插件中的重复代码
+   - `_find_member()`：查找结构体成员完整信息
+   - `_read_string()`：安全读取字符串，处理地址无效的情况
+   - `_walk_singly_linked_list()`：单链表遍历，适用于ThreadX的`created_ptr`链表
+   - `_walk_doubly_linked_list()`：双向链表遍历，适用于FreeRTOS的`List_t`结构
+   - `_calculate_stack_usage()`：基于stack_start/stack_end/current_sp计算栈使用率（FreeRTOS）
+   - `_calculate_stack_usage_highest()`：基于stack_start/stack_size/stack_highest_ptr计算栈使用率（ThreadX）
+   - `_normalize_task_state()`：任务状态映射统一方法
+   - `_normalize_resource_type()`：资源类型归一化
+
+2. **ThreadX插件重构**
+   - ThreadX v6 (`threadx_v6p5p1.py`)：继承`RTOSPlugin`，使用`_walk_singly_linked_list()`替代`_walk_created_list()`，使用`_calculate_stack_usage_highest()`和`_normalize_task_state()`
+   - ThreadX v5 (`threadx_v5p5p0.py`)：继承`RTOSPlugin`，使用`_walk_singly_linked_list()`和`_normalize_task_state()`
+
+3. **FreeRTOS插件重构**
+   - FreeRTOS v11 (`freertos_v11p3p0.py`)：继承`RTOSPlugin`，使用`_walk_doubly_linked_list()`替代`_parse_task_list()`，使用`_calculate_stack_usage()`和`_find_member_offset()`
+
+4. **代码复用统计**
+   - 删除重复的链表遍历逻辑约80行
+   - 删除重复的栈使用率计算约30行
+   - 删除重复的成员偏移查找约50行
+
+**测试结果**：35 个 RTOS 测试全部通过
+
+---
+
 ### v0.9.0 - 2026-07-19
 
 **RTOS插件泛用性增强 + OSPlugin基类重构**

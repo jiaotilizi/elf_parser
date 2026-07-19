@@ -3,10 +3,10 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from typing import Dict, List, Optional, Any
-from plugins.base import OSPlugin
+from plugins.rtos.base import RTOSPlugin
 
 
-class FreeRTOSV11Plugin(OSPlugin):
+class FreeRTOSV11Plugin(RTOSPlugin):
     def __init__(self):
         super().__init__(
             name='freertos_v11p3p0',
@@ -15,11 +15,6 @@ class FreeRTOSV11Plugin(OSPlugin):
             os_version='v11p3p0',
             description='FreeRTOS v11p3p0 analysis plugin'
         )
-    
-    def initialize(self, context: Dict[str, Any]) -> bool:
-        super().initialize(context)
-        self.profile = context.get('profile')
-        return True
     
     def get_resource_types(self) -> List[str]:
         return ['tasks', 'semaphores', 'mutexes', 'queues', 'timers', 'events']
@@ -65,7 +60,7 @@ class FreeRTOSV11Plugin(OSPlugin):
             list_struct = elf_parser.get_struct_type('List_t')
             list_size = list_struct.get('byte_size', 20) if list_struct else 20
             
-            for priority in range(8):
+            for priority in range(32):
                 list_addr = ready_lists_sym['address'] + priority * list_size
                 if self._is_tcb_in_list(tcb_addr, list_addr, elf_parser, dump_reader, is_32bit):
                     return 'READY'
@@ -89,19 +84,8 @@ class FreeRTOSV11Plugin(OSPlugin):
         if not tcb_struct:
             return False
         
-        state_list_item_offset = 4
-        for member in tcb_struct.get('members', []):
-            if member.get('name') == 'xStateListItem':
-                state_list_item_offset = member.get('offset', 4)
-                break
-        
-        list_item_offset = 4
-        list_struct = elf_parser.get_struct_type('List_t')
-        if list_struct:
-            for member in list_struct.get('members', []):
-                if member.get('name') == 'pxIndex':
-                    list_item_offset = member.get('offset', 4)
-                    break
+        state_list_item_offset = self._find_member_offset(tcb_struct, 'xStateListItem', 4)
+        list_item_offset = self._find_member_offset(elf_parser.get_struct_type('List_t'), 'pxIndex', 4)
         
         first_item_addr = dump_reader.read_pointer(list_addr + list_item_offset, is_32bit)
         if not first_item_addr:
@@ -149,6 +133,9 @@ class FreeRTOSV11Plugin(OSPlugin):
             if ux_top_used_priority is not None:
                 max_priorities = ux_top_used_priority + 1
         
+        tcb_struct = elf_parser.get_struct_type('TCB_t')
+        state_list_item_offset = self._find_member_offset(tcb_struct, 'xStateListItem', 4)
+        
         for priority in range(max_priorities):
             list_addr = ready_lists_addr + priority * list_size
             
@@ -156,86 +143,63 @@ class FreeRTOSV11Plugin(OSPlugin):
             if ux_number_of_items == 0 or ux_number_of_items is None:
                 continue
             
-            tasks.extend(self._parse_task_list(list_addr, elf_parser, dump_reader, is_32bit, max_priorities))
+            tasks.extend(self._walk_doubly_linked_list(
+                list_addr,
+                tcb_struct,
+                list_struct,
+                state_list_item_offset,
+                self._parse_tcb_with_context,
+                context
+            ))
         
         suspended_list_sym = elf_parser.get_symbol_by_name('xSuspendedTaskList')
         if suspended_list_sym:
-            tasks.extend(self._parse_task_list(suspended_list_sym['address'], elf_parser, dump_reader, is_32bit, max_priorities))
+            tasks.extend(self._walk_doubly_linked_list(
+                suspended_list_sym['address'],
+                tcb_struct,
+                list_struct,
+                state_list_item_offset,
+                self._parse_tcb_with_context,
+                context
+            ))
         
         delayed_list1_sym = elf_parser.get_symbol_by_name('xDelayedTaskList1')
         if delayed_list1_sym:
-            tasks.extend(self._parse_task_list(delayed_list1_sym['address'], elf_parser, dump_reader, is_32bit, max_priorities))
+            tasks.extend(self._walk_doubly_linked_list(
+                delayed_list1_sym['address'],
+                tcb_struct,
+                list_struct,
+                state_list_item_offset,
+                self._parse_tcb_with_context,
+                context
+            ))
         
         delayed_list2_sym = elf_parser.get_symbol_by_name('xDelayedTaskList2')
         if delayed_list2_sym:
-            tasks.extend(self._parse_task_list(delayed_list2_sym['address'], elf_parser, dump_reader, is_32bit, max_priorities))
+            tasks.extend(self._walk_doubly_linked_list(
+                delayed_list2_sym['address'],
+                tcb_struct,
+                list_struct,
+                state_list_item_offset,
+                self._parse_tcb_with_context,
+                context
+            ))
         
         return tasks
     
-    def _parse_task_list(self, list_addr: int, elf_parser, dump_reader, is_32bit: bool, max_priorities: int = 32) -> List[Dict[str, Any]]:
-        tasks = []
+    def _parse_tcb_with_context(self, tcb_addr: int, tcb_struct: Dict[str, Any], 
+                               elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
+        if tcb_addr <= 0 or tcb_addr < 0x10000:
+            return None
         
-        tcb_struct = elf_parser.get_struct_type('TCB_t')
-        if not tcb_struct:
-            return tasks
+        max_priorities = 32
+        ux_top_used_priority_sym = elf_parser.get_symbol_by_name('uxTopUsedPriority')
+        if ux_top_used_priority_sym:
+            ux_top_used_priority = dump_reader.read_uint32(ux_top_used_priority_sym['address'])
+            if ux_top_used_priority is not None:
+                max_priorities = ux_top_used_priority + 1
         
-        list_struct = elf_parser.get_struct_type('List_t')
-        if not list_struct:
-            return tasks
-        
-        list_size = list_struct.get('byte_size', 20)
-        
-        ux_number_of_items = dump_reader.read_uint32(list_addr)
-        if ux_number_of_items == 0 or ux_number_of_items is None:
-            return tasks
-        
-        list_item_offset = 4
-        for member in list_struct.get('members', []):
-            if member.get('name') == 'pxIndex':
-                list_item_offset = member.get('offset', 4)
-                break
-        
-        x_list_end_offset = list_item_offset + 4
-        
-        first_item_addr = dump_reader.read_pointer(list_addr + list_item_offset, is_32bit)
-        if not first_item_addr:
-            return tasks
-        
-        list_end_addr = list_addr + x_list_end_offset
-        if first_item_addr == list_end_addr:
-            return tasks
-        
-        current_ptr = first_item_addr
-        
-        state_list_item_offset = 4
-        for member in tcb_struct.get('members', []):
-            if member.get('name') == 'xStateListItem':
-                state_list_item_offset = member.get('offset', 4)
-                break
-        
-        visited = set()
-        
-        while current_ptr and current_ptr not in visited:
-            visited.add(current_ptr)
-            
-            if current_ptr == list_end_addr:
-                break
-            
-            tcb_addr = current_ptr - state_list_item_offset
-            if tcb_addr <= 0 or tcb_addr < 0x10000:
-                break
-            
-            task_info = self._parse_tcb(tcb_addr, tcb_struct, elf_parser, dump_reader, is_32bit, max_priorities)
-            if task_info:
-                tasks.append(task_info)
-            
-            next_ptr = dump_reader.read_pointer(current_ptr + 4, is_32bit)
-            if next_ptr in visited:
-                break
-            
-            current_ptr = next_ptr
-        
-        return tasks
+        return self._parse_tcb(tcb_addr, tcb_struct, elf_parser, dump_reader, is_32bit, max_priorities)
     
     def _parse_tcb(self, tcb_addr: int, tcb_struct: Dict[str, Any], 
                   elf_parser, dump_reader, is_32bit: bool, max_priorities: int = 32) -> Optional[Dict[str, Any]]:
@@ -293,12 +257,11 @@ class FreeRTOSV11Plugin(OSPlugin):
             elif member_name == 'uxMutexesHeld':
                 result['mutexes_held'] = dump_reader.read_uint32(tcb_addr + member_offset)
         
-        if result['stack_start'] and result['stack_end']:
-            stack_size = abs(result['stack_start'] - result['stack_end'])
-            result['stack_size'] = stack_size
-            if 'current_sp' in result and result['current_sp']:
-                used = abs(result['current_sp'] - result['stack_end'])
-                result['stack_usage'] = used / stack_size * 100 if stack_size > 0 else 0
+        result['stack_usage'] = self._calculate_stack_usage(
+            result['stack_start'],
+            result['stack_end'],
+            result['current_sp']
+        )
         
         if result['current_pc']:
             func_info = elf_parser.find_function_by_address(result['current_pc'])
@@ -367,10 +330,6 @@ class FreeRTOSV11Plugin(OSPlugin):
                     else:
                         result['type'] = 'counting_semaphore'
         else:
-            ux_messages_waiting_offset = None
-            ux_length_offset = None
-            ux_item_size_offset = None
-            
             list_struct = elf_parser.get_struct_type('List_t')
             if list_struct:
                 list_size = list_struct.get('byte_size', 20)
@@ -581,13 +540,7 @@ class FreeRTOSV11Plugin(OSPlugin):
         
         visited = set()
         
-        list_item_offset = 4
-        list_struct = elf_parser.get_struct_type('List_t')
-        if list_struct:
-            for member in list_struct.get('members', []):
-                if member.get('name') == 'pxIndex':
-                    list_item_offset = member.get('offset', 4)
-                    break
+        list_item_offset = self._find_member_offset(elf_parser.get_struct_type('List_t'), 'pxIndex', 4)
         
         first_item_addr = dump_reader.read_pointer(list_addr + list_item_offset, is_32bit)
         if not first_item_addr:
