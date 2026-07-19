@@ -6,17 +6,6 @@ from plugins.base import Plugin
 
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# FreeRTOS List_t 结构体布局常量
-# 这些值源于 FreeRTOS 内核源码中 ListItem_t / MiniListItem_t 的固定布局
-# ============================================================================
-
-# MiniListItem_t 中 pxNext 的偏移量（MiniListItem_t 只有 xItemValue 和 pxNext 两个字段）
-#   TickType_t xItemValue;  // offset 0
-#   ListItem_t *pxNext;     // offset 4
-_FREERTOS_LIST_ITEM_PX_NEXT_OFFSET = 4
-
-
 class ResourceType(str, Enum):
     TASKS = 'tasks'
     MUTEXES = 'mutexes'
@@ -218,93 +207,6 @@ class RTOSPlugin(Plugin):
             current_ptr = next_ptr
 
         return results
-    
-    def _walk_doubly_linked_list(self,
-                                list_addr: int,
-                                struct_type: Dict[str, Any],
-                                list_struct_type: Dict[str, Any],
-                                item_to_struct_offset: int,
-                                parse_func: Callable,
-                                context: Dict[str, Any],
-                                list_end_addr: Optional[int] = None) -> List[Dict[str, Any]]:
-        elf_parser = context.get('elf_parser') or self._elf_parser
-        dump_reader = context.get('dump_reader') or self._dump_reader
-
-        if not elf_parser or not dump_reader:
-            return []
-
-        is_32bit = elf_parser.is_32bit()
-
-        if not list_struct_type:
-            logger.warning("List_t struct type not found")
-            return []
-
-        # In FreeRTOS List_t, xListEnd is the sentinel anchor at offset 8.
-        # pxIndex (offset 4) is a scheduling hint used for round-robin,
-        # not the list head. The correct traversal starts from xListEnd.pxNext
-        # (offset 12 within List_t = offset 4 within MiniListItem_t).
-        xlist_end_offset = self._find_member_offset(list_struct_type, 'xListEnd', 8)
-        xlist_end_addr = list_addr + xlist_end_offset
-
-        if list_end_addr is None:
-            list_end_addr = xlist_end_addr
-
-        # Read xListEnd.pxNext (offset 4 within MiniListItem_t)
-        first_item_addr = dump_reader.read_pointer(xlist_end_addr + 4, is_32bit)
-        if not first_item_addr:
-            return []
-
-        if first_item_addr == list_end_addr:
-            return []
-
-        current_ptr = first_item_addr
-        visited = set()
-        results = []
-
-        while current_ptr and current_ptr not in visited:
-            visited.add(current_ptr)
-
-            if current_ptr == list_end_addr:
-                break
-
-            struct_addr = current_ptr - item_to_struct_offset
-            if struct_addr <= 0:
-                break
-
-            item_info = parse_func(struct_addr, struct_type, elf_parser, dump_reader, is_32bit)
-            if item_info:
-                results.append(item_info)
-
-            next_offset = _FREERTOS_LIST_ITEM_PX_NEXT_OFFSET
-            list_item_struct = elf_parser.get_struct_type('ListItem_t')
-            if list_item_struct:
-                next_offset = self._find_member_offset(list_item_struct, 'pxNext', _FREERTOS_LIST_ITEM_PX_NEXT_OFFSET)
-
-            next_ptr = dump_reader.read_pointer(current_ptr + next_offset, is_32bit)
-            current_ptr = next_ptr
-
-        return results
-    
-    def _calculate_stack_usage(self,
-                              stack_start: int,
-                              stack_end: int,
-                              current_sp: int,
-                              stack_size: int = 0) -> float:
-        if not stack_start or not stack_end:
-            return 0.0
-
-        if stack_size <= 0:
-            stack_size = abs(stack_start - stack_end)
-
-        if stack_size <= 0:
-            return 0.0
-
-        if current_sp:
-            used = abs(current_sp - min(stack_start, stack_end))
-        else:
-            return 0.0
-
-        return used / stack_size * 100 if stack_size > 0 else 0.0
     
     def _calculate_stack_usage_highest(self,
                                        stack_start: int,

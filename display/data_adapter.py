@@ -15,8 +15,8 @@ class DataAdapter:
                 {'name': 'state_name', 'label': 'State', 'type': 'string'},
                 {'name': 'priority', 'label': 'Priority', 'type': 'number'},
                 {'name': 'cpu_usage', 'label': 'CPU %', 'type': 'number'},
-                {'name': 'stack_size', 'label': 'Stack Size', 'type': 'number'},
-                {'name': 'stack_usage', 'label': 'Stack %', 'type': 'number'},
+                {'name': 'stack_size', 'label': 'Stack Sz', 'type': 'number'},
+                {'name': 'stack_usage', 'label': 'Stack Used', 'type': 'number'},
             ]
         ),
         'mutexes': ResourceMetadata(

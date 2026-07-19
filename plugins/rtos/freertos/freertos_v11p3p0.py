@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Callable
 
 from ..base import RTOSPlugin
 
@@ -44,6 +44,11 @@ _FREERTOS_MUTEX_HOLDER_OFFSET_FROM_MESSAGES = 12
 # PC 在 xPSR 之后，偏移为 4
 _FREERTOS_PC_OFFSET_IN_STACK_FRAME = 4
 
+# MiniListItem_t 中 pxNext 的偏移量（MiniListItem_t 只有 xItemValue 和 pxNext 两个字段）
+#   TickType_t xItemValue;  // offset 0
+#   ListItem_t *pxNext;     // offset 4
+_FREERTOS_LIST_ITEM_PX_NEXT_OFFSET = 4
+
 
 class FreeRTOSV11Plugin(RTOSPlugin):
     def __init__(self):
@@ -87,6 +92,146 @@ class FreeRTOSV11Plugin(RTOSPlugin):
             'QueueDefinition',
         ]
     
+    # ========================================================================
+    # DWARF 类型驱动的对象发现（不依赖变量名称关键词）
+    # ========================================================================
+    
+    # FreeRTOS 句柄类型 → 对象类型映射
+    # 通过 DWARF 类型信息发现对象，而非变量名称模式匹配
+    _HANDLE_TYPE_MAP = {
+        'SemaphoreHandle_t': 'semaphore_or_mutex',  # 信号量和互斥锁共用此类型
+        'QueueHandle_t': 'queue',
+        'TimerHandle_t': 'timer',
+        'EventGroupHandle_t': 'event',
+    }
+    
+    def _discover_handles_by_type(self, elf_parser, type_names: List[str]) -> List[Dict[str, Any]]:
+        """通过 DWARF 类型信息发现全局句柄变量。
+        
+        不依赖变量名称关键词，完全基于 DWARF 类型系统。
+        
+        Args:
+            elf_parser: ELFParser 实例
+            type_names: DWARF 类型名列表（如 ['SemaphoreHandle_t', 'QueueHandle_t']）
+        
+        Returns:
+            句柄信息列表，每个元素包含 name、address、dwarf_type
+        """
+        handles = []
+        all_symbols = elf_parser.get_all_symbols()
+        
+        for sym in all_symbols:
+            if sym.get('type') != 'global_object':
+                continue
+            
+            var_type = elf_parser.get_variable_type(sym['name'])
+            if not var_type:
+                continue
+            
+            type_name = var_type.get('name', '')
+            if type_name in type_names:
+                handles.append({
+                    'name': sym['name'],
+                    'address': sym['address'],
+                    'dwarf_type': type_name,
+                })
+        
+        return handles
+    
+    # ========================================================================
+    # FreeRTOS 专用双向链表遍历（从 base.py 下沉）
+    # ========================================================================
+    
+    def _walk_doubly_linked_list(self,
+                                list_addr: int,
+                                struct_type: Dict[str, Any],
+                                list_struct_type: Dict[str, Any],
+                                item_to_struct_offset: int,
+                                parse_func: Callable,
+                                context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """遍历 FreeRTOS List_t 双向链表。
+        
+        FreeRTOS List_t 中 xListEnd 是哨兵节点（offset 8），
+        pxIndex（offset 4）是 round-robin 调度提示，不是链表头。
+        正确遍历从 xListEnd.pxNext 开始。
+        """
+        elf_parser = context.get('elf_parser')
+        dump_reader = context.get('dump_reader')
+        
+        if not elf_parser or not dump_reader:
+            return []
+        
+        is_32bit = elf_parser.is_32bit()
+        
+        if not list_struct_type:
+            logger.warning("List_t struct type not found")
+            return []
+        
+        xlist_end_offset = self._find_member_offset(list_struct_type, 'xListEnd', 8)
+        xlist_end_addr = list_addr + xlist_end_offset
+        
+        # 从 xListEnd.pxNext 开始（offset 4 within MiniListItem_t）
+        first_item_addr = dump_reader.read_pointer(xlist_end_addr + 4, is_32bit)
+        if not first_item_addr:
+            return []
+        
+        if first_item_addr == xlist_end_addr:
+            return []
+        
+        current_ptr = first_item_addr
+        visited = set()
+        results = []
+        
+        while current_ptr and current_ptr not in visited:
+            visited.add(current_ptr)
+            
+            if current_ptr == xlist_end_addr:
+                break
+            
+            struct_addr = current_ptr - item_to_struct_offset
+            if struct_addr <= 0:
+                break
+            
+            item_info = parse_func(struct_addr, struct_type, elf_parser, dump_reader, is_32bit)
+            if item_info:
+                results.append(item_info)
+            
+            next_offset = _FREERTOS_LIST_ITEM_PX_NEXT_OFFSET
+            list_item_struct = elf_parser.get_struct_type('ListItem_t')
+            if list_item_struct:
+                next_offset = self._find_member_offset(list_item_struct, 'pxNext', _FREERTOS_LIST_ITEM_PX_NEXT_OFFSET)
+            
+            next_ptr = dump_reader.read_pointer(current_ptr + next_offset, is_32bit)
+            current_ptr = next_ptr
+        
+        return results
+    
+    def _calculate_stack_usage(self,
+                              stack_start: int,
+                              stack_end: int,
+                              current_sp: int,
+                              stack_size: int = 0) -> float:
+        """计算 FreeRTOS 任务栈使用率（栈向下增长）。
+        
+        FreeRTOS 在 ARM 上栈向下增长，pxStack 指向栈底（高地址），
+        pxEndOfStack 指向栈顶（低地址），pxTopOfStack 指向当前栈顶。
+        """
+        if not stack_start or not stack_end:
+            return 0.0
+        
+        if stack_size <= 0:
+            stack_size = abs(stack_start - stack_end)
+        
+        if stack_size <= 0:
+            return 0.0
+        
+        if current_sp:
+            used = abs(current_sp - min(stack_start, stack_end))
+        else:
+            return 0.0
+        
+        return used / stack_size * 100 if stack_size > 0 else 0.0
+    
     def _get_config_max_priorities(self, elf_parser) -> int:
         """从 pxReadyTasksLists 的 ELF 符号大小推导 configMAX_PRIORITIES。
         
@@ -124,54 +269,78 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         return max_priorities
     
     def _get_task_state(self, tcb_addr: int, elf_parser, dump_reader, is_32bit: bool) -> str:
+        """返回 FreeRTOS 任务状态的可读描述。
+        
+        状态判断基于 FreeRTOS 内核的任务调度机制：
+        - pxCurrentTCB → 当前正在执行
+        - pxReadyTasksLists → 就绪
+        - xSuspendedTaskList → 被 vTaskSuspend() 挂起
+        - xDelayedTaskList1/2 → 等待超时
+        - 不在任何已知列表 → 阻塞（等待信号量/互斥锁/队列/事件等）
+        """
         current_tcb_sym = elf_parser.get_symbol_by_name('pxCurrentTCB')
         if current_tcb_sym:
             current_tcb_addr = dump_reader.read_pointer(current_tcb_sym['address'], is_32bit)
             if current_tcb_addr == tcb_addr:
-                return 'RUNNING'
+                return 'Running'
         
         ready_lists_sym = elf_parser.get_symbol_by_name('pxReadyTasksLists')
         if ready_lists_sym:
             list_struct = elf_parser.get_struct_type('List_t')
             if not list_struct:
-                return 'UNKNOWN'
+                return 'Blocked'
             list_size = list_struct.get('byte_size', 0)
             if list_size <= 0:
-                return 'UNKNOWN'
+                return 'Blocked'
             
             max_priorities = self._get_config_max_priorities(elf_parser)
             if max_priorities <= 0:
-                return 'UNKNOWN'
+                return 'Blocked'
             
             for priority in range(max_priorities):
                 list_addr = ready_lists_sym['address'] + priority * list_size
                 if self._is_tcb_in_list(tcb_addr, list_addr, elf_parser, dump_reader, is_32bit):
-                    return 'READY'
+                    return 'Ready'
         
         suspended_list_sym = elf_parser.get_symbol_by_name('xSuspendedTaskList')
         if suspended_list_sym and self._is_tcb_in_list(tcb_addr, suspended_list_sym['address'], elf_parser, dump_reader, is_32bit):
-            return 'SUSPENDED'
+            return 'Suspended'
         
         delayed_list1_sym = elf_parser.get_symbol_by_name('xDelayedTaskList1')
         if delayed_list1_sym and self._is_tcb_in_list(tcb_addr, delayed_list1_sym['address'], elf_parser, dump_reader, is_32bit):
-            return 'DELAYED'
+            return 'Blocked(Time)'
         
         delayed_list2_sym = elf_parser.get_symbol_by_name('xDelayedTaskList2')
         if delayed_list2_sym and self._is_tcb_in_list(tcb_addr, delayed_list2_sym['address'], elf_parser, dump_reader, is_32bit):
-            return 'DELAYED'
+            return 'Blocked(Time)'
         
-        return 'UNKNOWN'
+        return 'Blocked'
     
     def _is_tcb_in_list(self, tcb_addr: int, list_addr: int, elf_parser, dump_reader, is_32bit: bool) -> bool:
+        """检查 TCB 是否在指定的 FreeRTOS List_t 中。
+        
+        从 xListEnd.pxNext 开始遍历（而非 pxIndex），
+        pxIndex 是 round-robin 调度提示，不是链表头。
+        """
         tcb_struct = elf_parser.get_struct_type('TCB_t')
         if not tcb_struct:
             return False
         
-        state_list_item_offset = self._find_member_offset(tcb_struct, 'xStateListItem', 4)
-        list_item_offset = self._find_member_offset(elf_parser.get_struct_type('List_t'), 'pxIndex', 4)
+        list_struct = elf_parser.get_struct_type('List_t')
+        if not list_struct:
+            return False
         
-        first_item_addr = dump_reader.read_pointer(list_addr + list_item_offset, is_32bit)
+        state_list_item_offset = self._find_member_offset(tcb_struct, 'xStateListItem', 4)
+        
+        # 从 xListEnd.pxNext 开始遍历（offset 8 + 4 = 12 within List_t）
+        xlist_end_offset = self._find_member_offset(list_struct, 'xListEnd', 8)
+        xlist_end_addr = list_addr + xlist_end_offset
+        
+        first_item_addr = dump_reader.read_pointer(xlist_end_addr + 4, is_32bit)
         if not first_item_addr:
+            return False
+        
+        if first_item_addr == xlist_end_addr:
             return False
         
         current_ptr = first_item_addr
@@ -179,6 +348,10 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         
         while current_ptr and current_ptr not in visited:
             visited.add(current_ptr)
+            
+            if current_ptr == xlist_end_addr:
+                break
+            
             item_tcb_addr = current_ptr - state_list_item_offset
             if item_tcb_addr == tcb_addr:
                 return True
@@ -310,6 +483,7 @@ class FreeRTOSV11Plugin(RTOSPlugin):
             'stack_end': 0,
             'stack_size': 0,
             'stack_usage': 0,
+            'stack_used_bytes': 0,
             'current_pc': 0,
             'current_function': '',
             'current_sp': 0,
@@ -357,11 +531,22 @@ class FreeRTOSV11Plugin(RTOSPlugin):
             elif member_name == 'uxMutexesHeld':
                 result['mutexes_held'] = dump_reader.read_uint32(tcb_addr + member_offset)
         
-        result['stack_usage'] = self._calculate_stack_usage(
-            result['stack_start'],
-            result['stack_end'],
-            result['current_sp']
-        )
+        # 计算栈使用率：优先使用 pxEndOfStack（如果 DWARF 中有）
+        # pxEndOfStack 仅在 configRECORD_STACK_HIGH_ADDRESS == 1 时存在
+        # 某些平台（如 Cortex-R52）可能不包含此字段
+        if result['stack_start'] and result['current_sp']:
+            # ARM 栈向下增长，pxStack 指向栈底（低地址），pxTopOfStack 指向当前栈顶
+            result['stack_used_bytes'] = abs(result['current_sp'] - result['stack_start'])
+            if result['stack_end']:
+                result['stack_size'] = abs(result['stack_start'] - result['stack_end'])
+                if result['stack_size'] > 0:
+                    result['stack_usage'] = round(result['stack_used_bytes'] / result['stack_size'] * 100, 1)
+                else:
+                    result['stack_usage'] = result['stack_used_bytes']
+            else:
+                # pxEndOfStack 不可用：无法计算总栈大小，显示绝对字节数
+                result['stack_size'] = 0
+                result['stack_usage'] = result['stack_used_bytes']
         
         if result['current_pc']:
             func_info = elf_parser.find_function_by_address(result['current_pc'])
@@ -369,6 +554,7 @@ class FreeRTOSV11Plugin(RTOSPlugin):
                 result['current_function'] = func_info.get('name', '')
         
         result['state'] = self._get_task_state(tcb_addr, elf_parser, dump_reader, is_32bit)
+        result['state_name'] = result['state']
         
         return result
     
@@ -381,28 +567,100 @@ class FreeRTOSV11Plugin(RTOSPlugin):
             return semaphores
         
         is_32bit = elf_parser.is_32bit()
-        
-        all_symbols = elf_parser.get_all_symbols()
-        # Discover semaphore symbols by naming convention (e.g., xSemaphore, xBinarySem)
-        # This heuristic may miss non-standard names; DWARF type-based discovery is preferred
-        sem_symbols = [s for s in all_symbols if s['name'].startswith('x') and 
-                      ('Sem' in s['name'] or 'sem' in s['name'] or 'Mutex' in s['name']) and
-                      'Task' not in s['name'] and
-                      s['type'] == 'global_object']
-        if not sem_symbols:
-            logger.debug("No semaphore symbols found by naming convention heuristic")
-        
         queue_struct = elf_parser.get_struct_type('QueueDefinition')
         
-        for sym in sem_symbols:
-            sem_addr = dump_reader.read_pointer(sym['address'], is_32bit)
-            if sem_addr:
-                sem_info = self._parse_semaphore(sem_addr, queue_struct, dump_reader, is_32bit, elf_parser)
-                if sem_info and sem_info['max_count'] > 0:
-                    sem_info['name'] = sym['name']
-                    semaphores.append(sem_info)
+        # 通过 DWARF 类型发现 SemaphoreHandle_t 句柄（不依赖变量名称）
+        handles = self._discover_handles_by_type(elf_parser, ['SemaphoreHandle_t'])
+        
+        for h in handles:
+            obj_addr = dump_reader.read_pointer(h['address'], is_32bit)
+            if not obj_addr:
+                continue
+            
+            # 分类：排除互斥锁和队列
+            classification = self._classify_queue_object(obj_addr, queue_struct, dump_reader, is_32bit, elf_parser)
+            if classification == 'mutex' or classification == 'queue':
+                continue
+            
+            sem_info = self._parse_semaphore(obj_addr, queue_struct, dump_reader, is_32bit, elf_parser)
+            if sem_info and sem_info['max_count'] > 0:
+                sem_info['name'] = h['name']
+                semaphores.append(sem_info)
         
         return semaphores
+    
+    def _classify_queue_object(self, obj_addr: int, queue_struct: Dict[str, Any],
+                                dump_reader, is_32bit: bool, elf_parser) -> str:
+        """基于 QueueDefinition 结构体字段分类对象类型。
+        
+        不依赖变量名称，仅通过结构体字段值判断：
+        - uxItemSize > 0 → queue
+        - uxItemSize == 0:
+          - uxLength > 1 → semaphore (counting)
+          - uxLength == 1:
+            - pcHead == NULL → mutex（FreeRTOS 互斥锁不分配数据存储）
+            - pxMutexHolder 非零 → mutex（已被持有的互斥锁）
+            - 否则 → semaphore (binary)
+        
+        FreeRTOS 内核中 xQueueCreateMutex() 将 pcHead 设为 NULL，
+        而 xSemaphoreCreateBinary() 会分配 1 字节存储，pcHead 非 NULL。
+        这是结构层面的区分依据，不依赖变量名称。
+        
+        Returns: 'queue', 'semaphore', 或 'mutex'
+        """
+        members = queue_struct.get('members', []) if queue_struct else []
+        
+        ux_item_size = 0
+        ux_length = 0
+        px_mutex_holder = 0
+        pc_head = 0
+        
+        if members:
+            for member in members:
+                member_name = member.get('name')
+                member_offset = member.get('offset', 0)
+                
+                if member_name == 'pcHead':
+                    pc_head = dump_reader.read_pointer_or_zero(obj_addr + member_offset, is_32bit)
+                elif member_name == 'uxItemSize':
+                    ux_item_size = dump_reader.read_uint32(obj_addr + member_offset) or 0
+                elif member_name == 'uxLength':
+                    ux_length = dump_reader.read_uint32(obj_addr + member_offset) or 0
+                elif member_name == 'pxMutexHolder':
+                    px_mutex_holder = dump_reader.read_pointer_or_zero(obj_addr + member_offset, is_32bit)
+        else:
+            list_struct = elf_parser.get_struct_type('List_t')
+            if not list_struct:
+                return 'semaphore'
+            list_size = list_struct.get('byte_size', 0)
+            if list_size <= 0:
+                return 'semaphore'
+            
+            # DWARF 不可用时，通过固定偏移读取 pcHead（offset 0）
+            pc_head = dump_reader.read_pointer_or_zero(obj_addr, is_32bit)
+            
+            ux_messages_waiting_offset = _FREERTOS_QUEUE_DEF_HEADER_SIZE + _FREERTOS_QUEUE_DEF_LIST_COUNT * list_size
+            ux_length_offset = ux_messages_waiting_offset + 4
+            ux_item_size_offset = ux_length_offset + 4
+            
+            ux_item_size = dump_reader.read_uint32(obj_addr + ux_item_size_offset) or 0
+            ux_length = dump_reader.read_uint32(obj_addr + ux_length_offset) or 0
+        
+        if ux_item_size > 0:
+            return 'queue'
+        
+        if ux_length > 1:
+            return 'semaphore'
+        
+        # uxLength == 1 and uxItemSize == 0
+        # FreeRTOS 互斥锁：pcHead == NULL（不分配数据存储）
+        if pc_head == 0:
+            return 'mutex'
+        
+        if px_mutex_holder != 0:
+            return 'mutex'
+        
+        return 'semaphore'
     
     def _parse_semaphore(self, sem_addr: int, queue_struct: Dict[str, Any], 
                         dump_reader, is_32bit: bool, elf_parser) -> Optional[Dict[str, Any]]:
@@ -469,22 +727,25 @@ class FreeRTOSV11Plugin(RTOSPlugin):
             return mutexes
         
         is_32bit = elf_parser.is_32bit()
-        
-        all_symbols = elf_parser.get_all_symbols()
-        mutex_symbols = [s for s in all_symbols if s['name'].startswith('x') and 
-                        'Mutex' in s['name'] and
-                        'Task' not in s['name'] and
-                        s['type'] == 'global_object']
-        
         queue_struct = elf_parser.get_struct_type('QueueDefinition')
         
-        for sym in mutex_symbols:
-            mutex_addr = dump_reader.read_pointer(sym['address'], is_32bit)
-            if mutex_addr:
-                mutex_info = self._parse_mutex(mutex_addr, queue_struct, dump_reader, is_32bit, elf_parser)
-                if mutex_info and mutex_info['count'] >= 0:
-                    mutex_info['name'] = sym['name']
-                    mutexes.append(mutex_info)
+        # 通过 DWARF 类型发现 SemaphoreHandle_t 句柄（不依赖变量名称）
+        handles = self._discover_handles_by_type(elf_parser, ['SemaphoreHandle_t'])
+        
+        for h in handles:
+            obj_addr = dump_reader.read_pointer(h['address'], is_32bit)
+            if not obj_addr:
+                continue
+            
+            # 分类：仅保留互斥锁
+            classification = self._classify_queue_object(obj_addr, queue_struct, dump_reader, is_32bit, elf_parser)
+            if classification != 'mutex':
+                continue
+            
+            mutex_info = self._parse_mutex(obj_addr, queue_struct, dump_reader, is_32bit, elf_parser)
+            if mutex_info and mutex_info['count'] >= 0:
+                mutex_info['name'] = h['name']
+                mutexes.append(mutex_info)
         
         return mutexes
     
@@ -541,22 +802,25 @@ class FreeRTOSV11Plugin(RTOSPlugin):
             return queues
         
         is_32bit = elf_parser.is_32bit()
-        
-        all_symbols = elf_parser.get_all_symbols()
-        queue_symbols = [s for s in all_symbols if s['name'].startswith('x') and 
-                        'Queue' in s['name'] and
-                        'Registry' not in s['name'] and
-                        s['type'] == 'global_object']
-        
         queue_struct = elf_parser.get_struct_type('QueueDefinition')
         
-        for sym in queue_symbols:
-            queue_addr = dump_reader.read_pointer(sym['address'], is_32bit)
-            if queue_addr:
-                queue_info = self._parse_queue(queue_addr, queue_struct, dump_reader, is_32bit, elf_parser)
-                if queue_info:
-                    queue_info['name'] = sym['name']
-                    queues.append(queue_info)
+        # 通过 DWARF 类型发现 QueueHandle_t 句柄（不依赖变量名称）
+        handles = self._discover_handles_by_type(elf_parser, ['QueueHandle_t'])
+        
+        for h in handles:
+            obj_addr = dump_reader.read_pointer(h['address'], is_32bit)
+            if not obj_addr:
+                continue
+            
+            # 分类：仅保留真正的队列（排除信号量和互斥锁）
+            classification = self._classify_queue_object(obj_addr, queue_struct, dump_reader, is_32bit, elf_parser)
+            if classification != 'queue':
+                continue
+            
+            queue_info = self._parse_queue(obj_addr, queue_struct, dump_reader, is_32bit, elf_parser)
+            if queue_info:
+                queue_info['name'] = h['name']
+                queues.append(queue_info)
         
         return queues
     
@@ -565,8 +829,8 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         result = {
             'address': queue_addr,
             'name': '',
-            'messages_count': 0,
-            'messages_max': 0,
+            'messages': 0,
+            'max_messages': 0,
             'message_size': 0,
         }
         
@@ -578,10 +842,10 @@ class FreeRTOSV11Plugin(RTOSPlugin):
                 member_offset = member.get('offset', 0)
                 
                 if member_name == 'uxMessagesWaiting':
-                    result['messages_count'] = dump_reader.read_uint32(queue_addr + member_offset)
+                    result['messages'] = dump_reader.read_uint32(queue_addr + member_offset)
                 
                 elif member_name == 'uxLength':
-                    result['messages_max'] = dump_reader.read_uint32(queue_addr + member_offset)
+                    result['max_messages'] = dump_reader.read_uint32(queue_addr + member_offset)
                 
                 elif member_name == 'uxItemSize':
                     result['message_size'] = dump_reader.read_uint32(queue_addr + member_offset)
@@ -601,9 +865,9 @@ class FreeRTOSV11Plugin(RTOSPlugin):
             ux_length_offset = ux_messages_waiting_offset + 4
             ux_item_size_offset = ux_length_offset + 4
             
-            result['messages_max'] = dump_reader.read_uint32(queue_addr + ux_length_offset)
+            result['max_messages'] = dump_reader.read_uint32(queue_addr + ux_length_offset)
             result['message_size'] = dump_reader.read_uint32(queue_addr + ux_item_size_offset)
-            result['messages_count'] = dump_reader.read_uint32(queue_addr + ux_messages_waiting_offset)
+            result['messages'] = dump_reader.read_uint32(queue_addr + ux_messages_waiting_offset)
         
         return result
     
@@ -617,14 +881,13 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         
         is_32bit = elf_parser.is_32bit()
         
+        # 通过 DWARF 类型发现 TimerHandle_t 句柄（不依赖变量名称关键词）
         timer_handle_map = {}
-        all_symbols = elf_parser.get_all_symbols()
-        for sym in all_symbols:
-            if sym['name'].startswith('x') and ('Timer' in sym['name'] or 'timer' in sym['name']):
-                if sym['type'] in ['global_object', 'local_object']:
-                    timer_ptr = dump_reader.read_pointer(sym['address'], is_32bit)
-                    if timer_ptr:
-                        timer_handle_map[timer_ptr] = sym['name']
+        handles = self._discover_handles_by_type(elf_parser, ['TimerHandle_t'])
+        for h in handles:
+            timer_ptr = dump_reader.read_pointer(h['address'], is_32bit)
+            if timer_ptr:
+                timer_handle_map[timer_ptr] = h['name']
         
         current_timer_list_sym = elf_parser.get_symbol_by_name('pxCurrentTimerList')
         if not current_timer_list_sym:
@@ -647,30 +910,37 @@ class FreeRTOSV11Plugin(RTOSPlugin):
     def _parse_timer_list(self, list_addr: int, elf_parser, dump_reader, is_32bit: bool, timer_handle_map: Dict[int, str] = None) -> List[Dict[str, Any]]:
         timers = []
         
-        visited = set()
+        list_struct = elf_parser.get_struct_type('List_t')
+        if not list_struct:
+            return timers
         
-        list_item_offset = self._find_member_offset(elf_parser.get_struct_type('List_t'), 'pxIndex', 4)
+        timer_struct = elf_parser.get_struct_type('Timer_t')
+        if not timer_struct:
+            logger.warning("Cannot parse timer list: Timer_t struct missing from DWARF")
+            return []
         
-        first_item_addr = dump_reader.read_pointer(list_addr + list_item_offset, is_32bit)
-        if not first_item_addr:
+        timer_list_item_offset = self._find_member_offset(timer_struct, 'xTimerListItem', 4)
+        
+        # 从 xListEnd.pxNext 开始遍历（而非 pxIndex）
+        xlist_end_offset = self._find_member_offset(list_struct, 'xListEnd', 8)
+        xlist_end_addr = list_addr + xlist_end_offset
+        
+        first_item_addr = dump_reader.read_pointer(xlist_end_addr + 4, is_32bit)
+        if not first_item_addr or first_item_addr == xlist_end_addr:
             return timers
         
         current_ptr = first_item_addr
+        visited = set()
         visited.add(current_ptr)
         
         while current_ptr:
-            timer_struct = elf_parser.get_struct_type('Timer_t')
-            if not timer_struct:
-                logger.warning("Cannot parse timer list: Timer_t struct missing from DWARF")
-                return []
-            timer_list_item_offset = self._find_member_offset(timer_struct, 'xTimerListItem', 4)
             timer_addr = current_ptr - timer_list_item_offset
             timer_info = self._parse_timer(timer_addr, elf_parser, dump_reader, is_32bit, timer_handle_map)
             if timer_info:
                 timers.append(timer_info)
             
             next_ptr = dump_reader.read_pointer(current_ptr + 4, is_32bit)
-            if next_ptr in visited or next_ptr == list_addr + list_item_offset:
+            if not next_ptr or next_ptr in visited or next_ptr == xlist_end_addr:
                 break
             
             visited.add(next_ptr)
@@ -728,17 +998,15 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         
         is_32bit = elf_parser.is_32bit()
         
-        all_symbols = elf_parser.get_all_symbols()
-        event_symbols = [s for s in all_symbols if s['name'].startswith('x') and 
-                        'EventGrp' in s['name'] and
-                        s['type'] == 'global_object']
+        # 通过 DWARF 类型发现 EventGroupHandle_t 句柄（不依赖变量名称）
+        handles = self._discover_handles_by_type(elf_parser, ['EventGroupHandle_t'])
         
-        for sym in event_symbols:
-            event_addr = dump_reader.read_pointer(sym['address'], is_32bit)
+        for h in handles:
+            event_addr = dump_reader.read_pointer(h['address'], is_32bit)
             if event_addr:
                 event_info = self._parse_event_group(event_addr, dump_reader, is_32bit)
                 if event_info:
-                    event_info['name'] = sym['name']
+                    event_info['name'] = h['name']
                     event_groups.append(event_info)
         
         return event_groups

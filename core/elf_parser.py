@@ -772,6 +772,21 @@ class ELFParser:
         self._all_symbols_cache = result
         return result
 
+    def get_variable_type(self, name: str) -> Optional[Dict[str, Any]]:
+        """获取全局变量的 DWARF 类型信息。
+
+        返回类型信息字典，包含 kind、name、byte_size 等字段。
+        对于指针类型，ref_type 包含被指向类型的完整信息。
+        对于 typedef 类型，ref_type 包含被 typedef 的真实类型。
+
+        Args:
+            name: 变量名
+
+        Returns:
+            类型信息字典，如果变量不在 DWARF 中则返回 None
+        """
+        return self._var_type_cache.get(name)
+
     def find_symbols_by_pattern(self, pattern: str) -> List[Dict[str, Any]]:
         result = []
         for name in self._symbol_cache:

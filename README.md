@@ -344,6 +344,41 @@ See LICENSE file for details.
 
 ## Changelog
 
+### v0.9.8 - 2026-07-20
+
+**彻底消除名称关键词依赖 — DWARF 类型驱动发现**
+
+1. **FreeRTOS 插件：消除所有名称关键词过滤**
+   - `_get_queues`：从 `'Queue' in name` 关键词过滤改为 `_discover_handles_by_type(elf_parser, ['QueueHandle_t'])` DWARF 类型发现
+   - `_get_timers`：timer_handle_map 构建从 `'Timer' in name` 关键词匹配改为 `_discover_handles_by_type(elf_parser, ['TimerHandle_t'])`
+   - `_get_events`：从 `'EventGrp' in name` 关键词过滤改为 `_discover_handles_by_type(elf_parser, ['EventGroupHandle_t'])`
+   - 新增 `_discover_handles_by_type()` 方法：遍历全局符号，通过 DWARF `DW_TAG_variable` 的 `DW_AT_type` 属性匹配类型名，完全基于 DWARF 类型系统，不依赖变量命名约定
+
+2. **互斥锁/信号量结构分类增强**
+   - `_classify_queue_object()` 新增 `pcHead` 字段检查：FreeRTOS 互斥锁创建时 `pcHead=NULL`（不分配数据存储），而二进制信号量分配 1 字节存储
+   - 修复后 `xMutex1`/`xMutex2` 正确归类到 Mutexes 而非 Semaphores
+   - 分类逻辑完全基于 QueueDefinition 结构体字段值，不依赖变量名称
+
+3. **FreeRTOS 特定方法从 base.py 下沉**
+   - `_walk_doubly_linked_list` 从 `plugins/rtos/base.py` 移到 `freertos_v11p3p0.py`（FreeRTOS List_t 遍历专用）
+   - `_calculate_stack_usage` 从 `plugins/rtos/base.py` 移到 `freertos_v11p3p0.py`（FreeRTOS 栈向下增长专用）
+   - base.py 代码量减少 98 行，通用性增强
+
+4. **FreeRTOS 栈使用率显示修复**
+   - 处理 `pxEndOfStack` 字段缺失场景（Cortex-R52 平台 `configRECORD_STACK_HIGH_ADDRESS=0`）
+   - 无法计算百分比时显示绝对字节数（如 `940 B`），避免显示 0 或 N/A
+
+5. **FreeRTOS 任务状态显示优化**
+   - 状态名称更直观：`DELAYED` → `Blocked(Time)`、`READY` → `Ready`、`RUNNING` → `Running`
+   - 状态判断基于 `pxCurrentTCB`、`pxReadyTasksLists`、`xSuspendedTaskList`、`xDelayedTaskList1/2` 内核符号
+
+6. **core/elf_parser.py 新增方法**
+   - 新增 `get_variable_type(name)` 公开方法：返回全局变量的 DWARF 类型信息（kind、name、byte_size、ref_type 等），为类型驱动的对象发现提供基础能力
+
+**测试结果**：5 个 RTOS 场景 display 验证通过（FreeRTOS: mps2_an386/mps3_an536, ThreadX: mps2_an386/mps3_an536/nxp_imx6ul），171 个单元测试通过
+
+---
+
 ### v0.9.7 - 2026-07-20
 
 **消除特例化处理 — 泛用性增强**

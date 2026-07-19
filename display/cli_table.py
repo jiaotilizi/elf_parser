@@ -85,7 +85,21 @@ class CliTableDisplay(DisplayBase):
                     field_name = field['name']
                     value = self._get_nested_value(item, field_name)
                     field_type = field.get('type', 'string')
-                    formatted = self._format_value(value, field_type)
+                    
+                    # 栈使用率特殊处理：当 stack_size=0 时显示绝对字节数
+                    if field_name == 'stack_usage' and isinstance(value, (int, float)) and value > 0:
+                        if item.get('stack_size', 0) == 0:
+                            formatted = f"{int(value)} B"
+                        else:
+                            formatted = f"{value}%"
+                    elif field_name == 'stack_size' and isinstance(value, (int, float)):
+                        if value == 0:
+                            formatted = "N/A"
+                        else:
+                            formatted = self._format_value(value, field_type)
+                    else:
+                        formatted = self._format_value(value, field_type)
+                    
                     max_len = field.get('max_len', 25)
                     row.append(str(formatted)[:max_len])
                 rows.append(row)
