@@ -251,8 +251,41 @@ Producer: arm-none-eabi-gcc (15:10.3-2021.07-4) 10.3.1 20210621 (release)
 2. Implement `OSPlugin` interface with:
    - `os_name`: RTOS name
    - `os_version`: RTOS version
-   - `execute(context)`: Return dict with resource lists (tasks, mutexes, etc.)
-   - `get_detail(resource_type, address)`: Return detailed info
+   - `get_resource_types()`: Return list of supported resource types
+   - `get_resource(resource_type, context)`: Return resource list for given type
+   - Optional: `get_tasks()`, `get_semaphores()`, etc. - delegate to `get_resource`
+
+### Resource Discovery Mechanism
+
+Plugins use a generic resource discovery mechanism:
+
+```python
+class MyRTOSPlugin(OSPlugin):
+    def get_resource_types(self) -> List[str]:
+        return ['tasks', 'semaphores', 'mutexes', 'queues']
+    
+    def get_resource(self, resource_type: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        resource_map = {
+            'tasks': self._parse_tasks,
+            'semaphores': self._parse_semaphores,
+            # ...
+        }
+        func = resource_map.get(resource_type)
+        return func(context) if func else []
+```
+
+### Supported Resource Types
+
+| Resource Type | Description |
+|---------------|-------------|
+| `tasks` | Thread/task information |
+| `semaphores` | Semaphore objects |
+| `mutexes` | Mutex objects |
+| `queues` | Message queues |
+| `timers` | Software timers |
+| `events` | Event flags/groups |
+| `block_pools` | Memory block pools (ThreadX) |
+| `byte_pools` | Memory byte pools (ThreadX) |
 
 ### Data Contract
 
@@ -304,6 +337,38 @@ See LICENSE file for details.
 ---
 
 ## Changelog
+
+### v0.9.0 - 2026-07-19
+
+**RTOS插件泛用性增强 + OSPlugin基类重构**
+
+1. **RTOS插件泛用性提升**
+   - FreeRTOS插件：移除硬编码偏移量，基于`List_t`结构体大小动态计算字段位置
+   - FreeRTOS任务优先级范围：通过`uxTopUsedPriority`符号动态获取，替代硬编码的8级优先级
+   - 地址有效性检查：添加`ux_number_of_items`检查、TCB地址范围检查、优先级有效性检查
+   - 列表解析逻辑优化：正确处理`xListEnd`结束标记，避免链表遍历越界
+
+2. **ThreadX插件修复**
+   - 将`_tx_thread_ready_list`替换为正确的`_tx_thread_priority_list`符号
+   - `_walk_created_list`方法下沉到ThreadX插件内部，不再放在基类
+
+3. **OSPlugin基类重构**
+   - 删除`RTOSPlugin`中间基类（无实际功能）
+   - 新增`get_resource_types()`方法：返回插件支持的资源类型列表
+   - 新增`get_resource(resource_type, context)`方法：根据类型获取资源
+   - 统一context管理：基类`initialize`中自动存储`_elf_parser`和`_dump_reader`
+   - 默认方法优化：`get_tasks/get_semaphores/get_mutexes/get_queues/get_timers/get_events`统一委托给`get_resource`
+
+4. **资源发现机制泛化**
+   - 插件自注册支持的资源类型，新增资源类型无需修改基类
+   - 各插件实现`get_resource_types()`和`get_resource()`方法
+   - FreeRTOS支持：tasks, semaphores, mutexes, queues, timers, events
+   - ThreadX v6支持：tasks, semaphores, mutexes, queues, events, timers, block_pools, byte_pools
+   - ThreadX v5支持：tasks, semaphores, mutexes, queues
+
+**测试结果**：35 个 RTOS 测试全部通过
+
+---
 
 ### v0.8.0 - 2026-07-19
 

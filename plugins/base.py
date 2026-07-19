@@ -61,22 +61,38 @@ class OSPlugin(Plugin):
         self.os_name = os_name
         self.os_version = os_version
         self._context = None
+        self._elf_parser = None
+        self._dump_reader = None
     
     def initialize(self, context: Dict[str, Any]) -> bool:
         self._context = context
+        self._elf_parser = context.get('elf_parser')
+        self._dump_reader = context.get('dump_reader')
         return True
     
-    def get_tasks(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_resource_types(self) -> List[str]:
         return []
+    
+    def get_resource(self, resource_type: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return []
+    
+    def get_tasks(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return self.get_resource('tasks', context)
     
     def get_semaphores(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return []
+        return self.get_resource('semaphores', context)
     
     def get_mutexes(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return []
+        return self.get_resource('mutexes', context)
     
     def get_queues(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return []
+        return self.get_resource('queues', context)
+    
+    def get_timers(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return self.get_resource('timers', context)
+    
+    def get_events(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        return self.get_resource('events', context)
     
     def get_heap_info(self, context: Dict[str, Any]) -> Dict[str, Any]:
         return {}

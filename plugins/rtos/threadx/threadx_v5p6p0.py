@@ -3,10 +3,10 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from typing import Dict, List, Optional, Any
-from plugins.rtos.base import RTOSPlugin
+from plugins.base import OSPlugin
 
 
-class ThreadXV5Plugin(RTOSPlugin):
+class ThreadXV5Plugin(OSPlugin):
     def __init__(self):
         super().__init__(
             name='threadx_v5p6p0',
@@ -17,10 +17,24 @@ class ThreadXV5Plugin(RTOSPlugin):
         )
     
     def initialize(self, context: Dict[str, Any]) -> bool:
-        self.elf_parser = context.get('elf_parser')
-        self.dump_reader = context.get('dump_reader')
+        super().initialize(context)
         self.profile = context.get('profile')
         return True
+    
+    def get_resource_types(self) -> List[str]:
+        return ['tasks', 'semaphores', 'mutexes', 'queues']
+    
+    def get_resource(self, resource_type: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        resource_map = {
+            'tasks': self.get_tasks_internal,
+            'semaphores': self.get_semaphores_internal,
+            'mutexes': self.get_mutexes_internal,
+            'queues': self.get_queues_internal,
+        }
+        func = resource_map.get(resource_type)
+        if func:
+            return func(context)
+        return []
     
     def get_required_symbols(self) -> List[str]:
         return [
@@ -40,7 +54,7 @@ class ThreadXV5Plugin(RTOSPlugin):
             'TX_HEAP',
         ]
     
-    def get_tasks(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_tasks_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         tasks = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
@@ -147,7 +161,7 @@ class ThreadXV5Plugin(RTOSPlugin):
         }
         return state_map.get(state_val, f'UNKNOWN({state_val})')
     
-    def get_semaphores(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_semaphores_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         semaphores = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
@@ -215,7 +229,7 @@ class ThreadXV5Plugin(RTOSPlugin):
         
         return result
     
-    def get_mutexes(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_mutexes_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         mutexes = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
@@ -284,7 +298,7 @@ class ThreadXV5Plugin(RTOSPlugin):
         
         return result
     
-    def get_queues(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_queues_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         queues = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')

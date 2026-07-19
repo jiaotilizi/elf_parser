@@ -3,10 +3,10 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from typing import Dict, List, Optional, Any
-from plugins.rtos.base import RTOSPlugin
+from plugins.base import OSPlugin
 
 
-class FreeRTOSV11Plugin(RTOSPlugin):
+class FreeRTOSV11Plugin(OSPlugin):
     def __init__(self):
         super().__init__(
             name='freertos_v11p3p0',
@@ -17,10 +17,26 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         )
     
     def initialize(self, context: Dict[str, Any]) -> bool:
-        self.elf_parser = context.get('elf_parser')
-        self.dump_reader = context.get('dump_reader')
+        super().initialize(context)
         self.profile = context.get('profile')
         return True
+    
+    def get_resource_types(self) -> List[str]:
+        return ['tasks', 'semaphores', 'mutexes', 'queues', 'timers', 'events']
+    
+    def get_resource(self, resource_type: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        resource_map = {
+            'tasks': self.get_tasks_internal,
+            'semaphores': self.get_semaphores_internal,
+            'mutexes': self.get_mutexes_internal,
+            'queues': self.get_queues_internal,
+            'timers': self.get_timers_internal,
+            'events': self.get_event_groups_internal,
+        }
+        func = resource_map.get(resource_type)
+        if func:
+            return func(context)
+        return []
     
     def get_required_symbols(self) -> List[str]:
         return [
@@ -107,7 +123,7 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         
         return False
     
-    def get_tasks(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_tasks_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         tasks = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
@@ -126,47 +142,70 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         list_struct = elf_parser.get_struct_type('List_t')
         list_size = list_struct.get('byte_size', 20) if list_struct else 20
         
-        for priority in range(8):
+        max_priorities = 32
+        ux_top_used_priority_sym = elf_parser.get_symbol_by_name('uxTopUsedPriority')
+        if ux_top_used_priority_sym:
+            ux_top_used_priority = dump_reader.read_uint32(ux_top_used_priority_sym['address'])
+            if ux_top_used_priority is not None:
+                max_priorities = ux_top_used_priority + 1
+        
+        for priority in range(max_priorities):
             list_addr = ready_lists_addr + priority * list_size
-            tasks.extend(self._parse_task_list(list_addr, elf_parser, dump_reader, is_32bit))
+            
+            ux_number_of_items = dump_reader.read_uint32(list_addr)
+            if ux_number_of_items == 0 or ux_number_of_items is None:
+                continue
+            
+            tasks.extend(self._parse_task_list(list_addr, elf_parser, dump_reader, is_32bit, max_priorities))
         
         suspended_list_sym = elf_parser.get_symbol_by_name('xSuspendedTaskList')
         if suspended_list_sym:
-            tasks.extend(self._parse_task_list(suspended_list_sym['address'], elf_parser, dump_reader, is_32bit))
+            tasks.extend(self._parse_task_list(suspended_list_sym['address'], elf_parser, dump_reader, is_32bit, max_priorities))
         
         delayed_list1_sym = elf_parser.get_symbol_by_name('xDelayedTaskList1')
         if delayed_list1_sym:
-            tasks.extend(self._parse_task_list(delayed_list1_sym['address'], elf_parser, dump_reader, is_32bit))
+            tasks.extend(self._parse_task_list(delayed_list1_sym['address'], elf_parser, dump_reader, is_32bit, max_priorities))
         
         delayed_list2_sym = elf_parser.get_symbol_by_name('xDelayedTaskList2')
         if delayed_list2_sym:
-            tasks.extend(self._parse_task_list(delayed_list2_sym['address'], elf_parser, dump_reader, is_32bit))
+            tasks.extend(self._parse_task_list(delayed_list2_sym['address'], elf_parser, dump_reader, is_32bit, max_priorities))
         
         return tasks
     
-    def _parse_task_list(self, list_addr: int, elf_parser, dump_reader, is_32bit: bool) -> List[Dict[str, Any]]:
+    def _parse_task_list(self, list_addr: int, elf_parser, dump_reader, is_32bit: bool, max_priorities: int = 32) -> List[Dict[str, Any]]:
         tasks = []
         
         tcb_struct = elf_parser.get_struct_type('TCB_t')
         if not tcb_struct:
             return tasks
         
-        visited = set()
+        list_struct = elf_parser.get_struct_type('List_t')
+        if not list_struct:
+            return tasks
+        
+        list_size = list_struct.get('byte_size', 20)
+        
+        ux_number_of_items = dump_reader.read_uint32(list_addr)
+        if ux_number_of_items == 0 or ux_number_of_items is None:
+            return tasks
         
         list_item_offset = 4
-        list_struct = elf_parser.get_struct_type('List_t')
-        if list_struct:
-            for member in list_struct.get('members', []):
-                if member.get('name') == 'pxIndex':
-                    list_item_offset = member.get('offset', 4)
-                    break
+        for member in list_struct.get('members', []):
+            if member.get('name') == 'pxIndex':
+                list_item_offset = member.get('offset', 4)
+                break
+        
+        x_list_end_offset = list_item_offset + 4
         
         first_item_addr = dump_reader.read_pointer(list_addr + list_item_offset, is_32bit)
         if not first_item_addr:
             return tasks
         
+        list_end_addr = list_addr + x_list_end_offset
+        if first_item_addr == list_end_addr:
+            return tasks
+        
         current_ptr = first_item_addr
-        visited.add(current_ptr)
         
         state_list_item_offset = 4
         for member in tcb_struct.get('members', []):
@@ -174,23 +213,32 @@ class FreeRTOSV11Plugin(RTOSPlugin):
                 state_list_item_offset = member.get('offset', 4)
                 break
         
-        while current_ptr:
+        visited = set()
+        
+        while current_ptr and current_ptr not in visited:
+            visited.add(current_ptr)
+            
+            if current_ptr == list_end_addr:
+                break
+            
             tcb_addr = current_ptr - state_list_item_offset
-            task_info = self._parse_tcb(tcb_addr, tcb_struct, elf_parser, dump_reader, is_32bit)
+            if tcb_addr <= 0 or tcb_addr < 0x10000:
+                break
+            
+            task_info = self._parse_tcb(tcb_addr, tcb_struct, elf_parser, dump_reader, is_32bit, max_priorities)
             if task_info:
                 tasks.append(task_info)
             
             next_ptr = dump_reader.read_pointer(current_ptr + 4, is_32bit)
-            if next_ptr in visited or next_ptr == list_addr + state_list_item_offset:
+            if next_ptr in visited:
                 break
             
-            visited.add(next_ptr)
             current_ptr = next_ptr
         
         return tasks
     
     def _parse_tcb(self, tcb_addr: int, tcb_struct: Dict[str, Any], 
-                  elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
+                  elf_parser, dump_reader, is_32bit: bool, max_priorities: int = 32) -> Optional[Dict[str, Any]]:
         result = {
             'address': tcb_addr,
             'name': '',
@@ -220,7 +268,9 @@ class FreeRTOSV11Plugin(RTOSPlugin):
             
             elif member_name == 'uxPriority':
                 priority = dump_reader.read_uint32(tcb_addr + member_offset)
-                if priority >= 32:
+                if priority is None:
+                    return None
+                if priority >= max_priorities:
                     return None
                 result['priority'] = priority
             
@@ -259,7 +309,7 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         
         return result
     
-    def get_semaphores(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_semaphores_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         semaphores = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
@@ -317,9 +367,24 @@ class FreeRTOSV11Plugin(RTOSPlugin):
                     else:
                         result['type'] = 'counting_semaphore'
         else:
-            result['max_count'] = dump_reader.read_uint32(sem_addr + 60)
-            item_size = dump_reader.read_uint32(sem_addr + 64)
-            result['count'] = dump_reader.read_uint32(sem_addr + 68)
+            ux_messages_waiting_offset = None
+            ux_length_offset = None
+            ux_item_size_offset = None
+            
+            list_struct = self.elf_parser.get_struct_type('List_t')
+            if list_struct:
+                list_size = list_struct.get('byte_size', 20)
+                ux_messages_waiting_offset = 2 * list_size
+                ux_length_offset = ux_messages_waiting_offset + 4
+                ux_item_size_offset = ux_length_offset + 4
+            else:
+                ux_messages_waiting_offset = 40
+                ux_length_offset = 44
+                ux_item_size_offset = 48
+            
+            result['max_count'] = dump_reader.read_uint32(sem_addr + ux_length_offset)
+            item_size = dump_reader.read_uint32(sem_addr + ux_item_size_offset)
+            result['count'] = dump_reader.read_uint32(sem_addr + ux_messages_waiting_offset)
             
             if result['count'] == 65535:
                 result['count'] = result['max_count']
@@ -331,7 +396,7 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         
         return result
     
-    def get_mutexes(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_mutexes_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         mutexes = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
@@ -384,8 +449,17 @@ class FreeRTOSV11Plugin(RTOSPlugin):
                 elif member_name == 'uxMessagesWaiting':
                     result['count'] = dump_reader.read_uint32(mutex_addr + member_offset)
         else:
-            result['owner'] = dump_reader.read_pointer_or_zero(mutex_addr + 44, is_32bit)
-            result['count'] = dump_reader.read_uint32(mutex_addr + 68)
+            list_struct = self.elf_parser.get_struct_type('List_t')
+            if list_struct:
+                list_size = list_struct.get('byte_size', 20)
+                px_mutex_holder_offset = 2 * list_size + 8
+                ux_messages_waiting_offset = 2 * list_size
+            else:
+                px_mutex_holder_offset = 48
+                ux_messages_waiting_offset = 40
+            
+            result['owner'] = dump_reader.read_pointer_or_zero(mutex_addr + px_mutex_holder_offset, is_32bit)
+            result['count'] = dump_reader.read_uint32(mutex_addr + ux_messages_waiting_offset)
             if result['count'] == 65535:
                 result['count'] = 0
             if result['owner'] == 0xffffffff:
@@ -393,7 +467,7 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         
         return result
     
-    def get_queues(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_queues_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         queues = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
@@ -446,15 +520,26 @@ class FreeRTOSV11Plugin(RTOSPlugin):
                 elif member_name == 'uxItemSize':
                     result['message_size'] = dump_reader.read_uint32(queue_addr + member_offset)
         else:
-            result['messages_max'] = dump_reader.read_uint32(queue_addr + 60)
-            result['message_size'] = dump_reader.read_uint32(queue_addr + 64)
-            result['messages_count'] = dump_reader.read_uint32(queue_addr + 68)
+            list_struct = self.elf_parser.get_struct_type('List_t')
+            if list_struct:
+                list_size = list_struct.get('byte_size', 20)
+                ux_messages_waiting_offset = 2 * list_size
+                ux_length_offset = ux_messages_waiting_offset + 4
+                ux_item_size_offset = ux_length_offset + 4
+            else:
+                ux_messages_waiting_offset = 40
+                ux_length_offset = 44
+                ux_item_size_offset = 48
+            
+            result['messages_max'] = dump_reader.read_uint32(queue_addr + ux_length_offset)
+            result['message_size'] = dump_reader.read_uint32(queue_addr + ux_item_size_offset)
+            result['messages_count'] = dump_reader.read_uint32(queue_addr + ux_messages_waiting_offset)
             if result['messages_count'] == 65535:
                 result['messages_count'] = 0
         
         return result
     
-    def get_timers(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_timers_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         timers = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
@@ -558,17 +643,21 @@ class FreeRTOSV11Plugin(RTOSPlugin):
                     result['active'] = (status & 1) != 0
                     result['auto_reload'] = (status & 2) != 0
         else:
+            pc_timer_name_offset = 0
+            
+            list_struct = elf_parser.get_struct_type('ListItem_t')
+            list_item_size = list_struct.get('byte_size', 20) if list_struct else 20
+            
+            x_timer_period_offset = pc_timer_name_offset + 4 + list_item_size
+            uc_status_offset = x_timer_period_offset + 4 + 4 + 4
+            
             if not result['name']:
-                name_addr = dump_reader.read_pointer(timer_addr + 28, is_32bit)
+                name_addr = dump_reader.read_pointer(timer_addr + pc_timer_name_offset, is_32bit)
                 if name_addr:
                     result['name'] = dump_reader.read_string(name_addr, 16) or ''
             
-            period = dump_reader.read_uint32(timer_addr + 8)
-            if period == 0 or period > 1000000:
-                period = dump_reader.read_uint32(timer_addr + 12)
-            
-            result['period_ticks'] = period
-            status = dump_reader.read_uint8(timer_addr + 32)
+            result['period_ticks'] = dump_reader.read_uint32(timer_addr + x_timer_period_offset)
+            status = dump_reader.read_uint8(timer_addr + uc_status_offset)
             result['active'] = (status & 1) != 0
             result['auto_reload'] = (status & 2) != 0
         
@@ -580,7 +669,7 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         
         return result
     
-    def get_event_groups(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_event_groups_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         event_groups = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')

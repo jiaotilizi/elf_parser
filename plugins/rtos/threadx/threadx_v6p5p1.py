@@ -3,10 +3,10 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from typing import Dict, List, Optional, Any
-from plugins.rtos.base import RTOSPlugin
+from plugins.base import OSPlugin
 
 
-class ThreadXV6Plugin(RTOSPlugin):
+class ThreadXV6Plugin(OSPlugin):
     def __init__(self):
         super().__init__(
             name='threadx_v6p5p1',
@@ -15,6 +15,84 @@ class ThreadXV6Plugin(RTOSPlugin):
             os_version='v6p5p1',
             description='ThreadX v6p5p1 RTOS analysis plugin'
         )
+    
+    def _walk_created_list(self, 
+                          symbol_name: str, 
+                          struct_name: str, 
+                          next_field_name: str,
+                          parse_func,
+                          context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        elf_parser = context.get('elf_parser')
+        dump_reader = context.get('dump_reader')
+        
+        if not elf_parser or not dump_reader:
+            logger.warning(f"Missing elf_parser or dump_reader in context for {symbol_name}")
+            return []
+        
+        list_sym = elf_parser.get_symbol_by_name(symbol_name)
+        if not list_sym:
+            logger.warning(f"Symbol not found: {symbol_name}")
+            return []
+        
+        list_addr = list_sym['address']
+        is_32bit = elf_parser.is_32bit()
+        
+        struct_type = elf_parser.get_struct_type(struct_name)
+        if not struct_type:
+            logger.warning(f"Struct type not found: {struct_name}")
+            return []
+        
+        head_ptr = dump_reader.read_pointer(list_addr, is_32bit)
+        if not head_ptr:
+            return []
+        
+        next_offset = 0
+        for member in struct_type.get('members', []):
+            if member.get('name') == next_field_name:
+                next_offset = member.get('offset', 0)
+                break
+        
+        visited = set()
+        current_ptr = head_ptr
+        results = []
+        
+        while current_ptr and current_ptr not in visited:
+            visited.add(current_ptr)
+            
+            item_info = parse_func(current_ptr, struct_type, elf_parser, dump_reader, is_32bit)
+            if item_info:
+                results.append(item_info)
+            
+            next_ptr = dump_reader.read_pointer(current_ptr + next_offset, is_32bit)
+            current_ptr = next_ptr
+        
+        return results
+    
+    def initialize(self, context: Dict[str, Any]) -> bool:
+        super().initialize(context)
+        return True
+    
+    def get_resource_types(self) -> List[str]:
+        return ['tasks', 'semaphores', 'mutexes', 'queues', 'events', 'timers', 'block_pools', 'byte_pools']
+    
+    def get_resource(self, resource_type: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        resource_map = {
+            'tasks': self.get_tasks_internal,
+            'semaphores': self.get_semaphores_internal,
+            'mutexes': self.get_mutexes_internal,
+            'queues': self.get_queues_internal,
+            'events': self.get_events_internal,
+            'timers': self.get_timers_internal,
+            'block_pools': self.get_block_pools_internal,
+            'byte_pools': self.get_byte_pools_internal,
+        }
+        func = resource_map.get(resource_type)
+        if func:
+            return func(context)
+        return []
     
     def get_required_symbols(self) -> List[str]:
         return [
@@ -42,7 +120,7 @@ class ThreadXV6Plugin(RTOSPlugin):
             'TX_HEAP',
         ]
     
-    def get_tasks(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_tasks_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         tasks = self._walk_created_list(
             '_tx_thread_created_ptr',
             'TX_THREAD',
@@ -58,7 +136,7 @@ class ThreadXV6Plugin(RTOSPlugin):
         if current_ptr_sym:
             current_ptr_value = dump_reader.read_uint32(current_ptr_sym['address'])
             if current_ptr_value == 0:
-                ready_list_sym = elf_parser.get_symbol_by_name('_tx_thread_ready_list')
+                ready_list_sym = elf_parser.get_symbol_by_name('_tx_thread_priority_list')
                 if ready_list_sym:
                     ready_list_addr = ready_list_sym['address']
                     for priority in range(32):
@@ -185,7 +263,7 @@ class ThreadXV6Plugin(RTOSPlugin):
         
         return result
     
-    def get_semaphores(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_semaphores_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         return self._walk_created_list(
             '_tx_semaphore_created_ptr',
             'TX_SEMAPHORE',
@@ -234,7 +312,7 @@ class ThreadXV6Plugin(RTOSPlugin):
         
         return result
     
-    def get_mutexes(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_mutexes_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         return self._walk_created_list(
             '_tx_mutex_created_ptr',
             'TX_MUTEX',
@@ -300,7 +378,7 @@ class ThreadXV6Plugin(RTOSPlugin):
         
         return result
     
-    def get_queues(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_queues_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         return self._walk_created_list(
             '_tx_queue_created_ptr',
             'TX_QUEUE',
@@ -355,7 +433,7 @@ class ThreadXV6Plugin(RTOSPlugin):
         
         return result
     
-    def get_events(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_events_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         return self._walk_created_list(
             '_tx_event_flags_created_ptr',
             'TX_EVENT_FLAGS_GROUP',
@@ -402,7 +480,7 @@ class ThreadXV6Plugin(RTOSPlugin):
         
         return result
     
-    def get_timers(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_timers_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         return self._walk_created_list(
             '_tx_timer_created_ptr',
             'TX_TIMER',
@@ -465,7 +543,7 @@ class ThreadXV6Plugin(RTOSPlugin):
         
         return result
     
-    def get_block_pools(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_block_pools_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         return self._walk_created_list(
             '_tx_block_pool_created_ptr',
             'TX_BLOCK_POOL',
@@ -516,7 +594,7 @@ class ThreadXV6Plugin(RTOSPlugin):
         
         return result
     
-    def get_byte_pools(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_byte_pools_internal(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         return self._walk_created_list(
             '_tx_byte_pool_created_ptr',
             'TX_BYTE_POOL',
