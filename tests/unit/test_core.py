@@ -110,7 +110,7 @@ class TestProfileLoader(unittest.TestCase):
 
     def test_load_qemu_m4_bare_profile(self):
         loader = ProfileLoader()
-        profile = loader.load_profile('qemu/arm_mps2_an386_bare')
+        profile = loader.load_profile('qemu/mps2_an386_bare')
 
         self.assertIsNotNone(profile)
         self.assertIn('memory', profile)
@@ -142,7 +142,7 @@ class TestProfileLoader(unittest.TestCase):
 
     def test_load_plugins_from_profile(self):
         loader = ProfileLoader()
-        profile = loader.load_profile('qemu/arm_mps2_an386_threadx')
+        profile = loader.load_profile('qemu/mps2_an386_threadx')
 
         plugins = loader.load_plugins_from_profile(profile)
         self.assertTrue(len(plugins) > 0)

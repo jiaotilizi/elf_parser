@@ -362,7 +362,7 @@ def runner_from_profile(
     """从 profile YAML 的 qemu: 块构造 QemuRunner。
 
     参数：
-      profile_name: 如 'qemu/arm_mps2_an386_bare'
+      profile_name: 如 'qemu/mps2_an386_bare'
       scenario_dir: 场景目录（含 ELF 和 dump），如 '.../firmware/qemu_m4_bare'
       elf_filename: ELF 文件名（不含路径），如 'test_firmware_qemu.elf'
       dump_filename: dump 文件名（不含路径），如 'test_dump_qemu.bin'

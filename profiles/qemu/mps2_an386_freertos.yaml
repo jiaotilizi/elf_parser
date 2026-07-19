@@ -1,0 +1,34 @@
+chip:
+  name: qemu_mps2_an386_freertos
+  vendor: arm
+  description: QEMU ARM MPS2 AN386 (Cortex-M4) + FreeRTOS V11.3.0
+  arch: armv7e-m
+  cpu: cortex-m4
+  bits: 32
+qemu:
+  binary: qemu-system-arm
+  machine: mps2-an386
+  cpu: cortex-m4
+  kernel_arg: -kernel
+  ram_base: 536870912
+  ram_size: 65536
+  run_seconds: 3.0
+memory:
+- name: ram
+  start_addr: 536870912
+  size: 65536
+plugins:
+- rtos.freertos.freertos_v11p3p0
+- module.assert_info.assert_info_v0
+- module.test_point.test_point_v0
+display:
+  scheme: cli_table
+  options:
+    show_hex: true
+    show_address: true
+    max_rows: 50
+keyword:
+- pxReadyTasksLists
+- xQueueCreate
+- vTaskStartScheduler
+- thread_
