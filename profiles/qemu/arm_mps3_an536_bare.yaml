@@ -1,0 +1,24 @@
+chip:
+  name: qemu_arm_mps3_an536_bare
+  vendor: arm
+  description: QEMU ARM MPS3 AN536 Cortex-R52 bare-metal
+  arch: armv7-r
+  cpu: cortex-r52
+  bits: 32
+qemu:
+  binary: qemu-system-arm
+  machine: mps3-an536
+  cpu: cortex-r52
+  kernel_arg: -kernel
+  ram_base: 536870912
+  ram_size: 16384
+  run_seconds: 2.0
+memory:
+- name: ram
+  start_addr: 536870912
+  size: 16384
+display:
+  scheme: cli_basic
+  options:
+    show_hex: true
+plugins: []

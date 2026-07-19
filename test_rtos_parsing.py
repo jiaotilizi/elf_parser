@@ -18,7 +18,7 @@ def test_threadx_parsing():
     dump_path = os.path.join(firmware_dir, 'output', 'img', 'threadx_ram_dump.bin')
     
     loader = ProfileLoader()
-    profile = loader.load_profile('qemu/m4_threadx')
+    profile = loader.load_profile('qemu/arm_mps2_an386_threadx')
     regions = loader.get_memory_regions(profile)
     
     elf_parser = ELFParser(elf_path)
@@ -76,7 +76,7 @@ def test_freertos_parsing():
         return
     
     loader = ProfileLoader()
-    profile = loader.load_profile('qemu/r52_freertos')
+    profile = loader.load_profile('qemu/arm_mps3_an536_freertos')
     regions = loader.get_memory_regions(profile)
     
     elf_parser = ELFParser(elf_path)

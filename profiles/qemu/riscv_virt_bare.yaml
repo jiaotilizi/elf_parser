@@ -1,0 +1,27 @@
+chip:
+  name: qemu_riscv_virt_bare
+  vendor: riscv
+  description: QEMU RISC-V sifive_e RV32 bare-metal
+  arch: rv32imac
+  cpu: sifive-e31
+  bits: 32
+qemu:
+  binary: qemu-system-riscv32
+  machine: sifive_e
+  cpu: sifive-e31
+  kernel_arg: -kernel
+  ram_base: 2147483648
+  ram_size: 4096
+  run_seconds: 2.0
+memory:
+- name: flash
+  start_addr: 541065216
+  size: 65536
+- name: ram
+  start_addr: 2147483648
+  size: 4096
+display:
+  scheme: cli_basic
+  options:
+    show_hex: true
+plugins: []
