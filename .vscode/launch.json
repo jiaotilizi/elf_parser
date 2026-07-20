@@ -1,0 +1,172 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Main: mps2_an386_freertos",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "args": [
+                "--elf", "${workspaceFolder}/tests/qemu/mps2_an386_freertos/firmware/output/img/test_firmware_freertos.elf",
+                "--dump", "${workspaceFolder}/tests/qemu/mps2_an386_freertos/firmware/output/img/test_dump_freertos.bin",
+                "--profile", "qemu/mps2_an386_freertos",
+                "--display", "cli_table"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Main: mps2_an386_threadx",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "args": [
+                "--elf", "${workspaceFolder}/tests/qemu/mps2_an386_threadx/firmware/output/img/sample_threadx.elf",
+                "--dump", "${workspaceFolder}/tests/qemu/mps2_an386_threadx/firmware/output/img/threadx_ram_dump.bin",
+                "--profile", "qemu/mps2_an386_threadx",
+                "--display", "cli_table"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Main: mps3_an536_freertos",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "args": [
+                "--elf", "${workspaceFolder}/tests/qemu/mps3_an536_freertos/firmware/output/img/test_firmware_freertos.elf",
+                "--dump", "${workspaceFolder}/tests/qemu/mps3_an536_freertos/firmware/output/img/test_dump_freertos.bin",
+                "--profile", "qemu/mps3_an536_freertos",
+                "--display", "cli_table"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Main: mps3_an536_threadx",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "args": [
+                "--elf", "${workspaceFolder}/tests/qemu/mps3_an536_threadx/firmware/output/img/sample_threadx.elf",
+                "--dump", "${workspaceFolder}/tests/qemu/mps3_an536_threadx/firmware/output/img/threadx_ram_dump.bin",
+                "--profile", "qemu/mps3_an536_threadx",
+                "--display", "cli_table"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Main: nxp_imx6ul_threadx",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "args": [
+                "--elf", "${workspaceFolder}/tests/qemu/nxp_imx6ul_threadx/firmware/output/img/test_firmware_nxp_imx6ul_threadx.elf",
+                "--dump", "${workspaceFolder}/tests/qemu/nxp_imx6ul_threadx/firmware/output/img/test_dump_nxp_imx6ul_threadx.bin",
+                "--profile", "qemu/nxp_imx6ul_threadx",
+                "--display", "cli_table"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Main: List Profiles",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "args": ["--list-profiles"],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Main: List Plugins",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "args": ["--list-plugins"],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Pytest: All RTOS Tests",
+            "type": "python",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "tests/qemu/mps2_an386_freertos/",
+                "tests/qemu/mps3_an536_freertos/",
+                "tests/qemu/mps2_an386_threadx/",
+                "tests/qemu/mps3_an536_threadx/",
+                "tests/qemu/nxp_imx6ul_threadx/",
+                "-v",
+                "--tb=short"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Pytest: FreeRTOS Tests",
+            "type": "python",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "tests/qemu/mps2_an386_freertos/",
+                "tests/qemu/mps3_an536_freertos/",
+                "-v",
+                "--tb=short"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Pytest: ThreadX Tests",
+            "type": "python",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "tests/qemu/mps2_an386_threadx/",
+                "tests/qemu/mps3_an536_threadx/",
+                "tests/qemu/nxp_imx6ul_threadx/",
+                "-v",
+                "--tb=short"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Pytest: Unit Tests",
+            "type": "python",
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                "tests/unit/",
+                "-v",
+                "--tb=short"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        }
+    ]
+}
