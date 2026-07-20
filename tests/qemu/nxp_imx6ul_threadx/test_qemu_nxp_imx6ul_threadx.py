@@ -31,7 +31,7 @@ class TestQEMUNxpImx6ulThreadXFirmwareAutoParse(unittest.TestCase):
 
         self.elf_parser = ELFParser(self.ELF_PATH)
         profile_loader = ProfileLoader()
-        profile = profile_loader.load_profile('qemu/nxp_imx6ul_threadx')
+        profile = profile_loader.load_profile('profiles/qemu/nxp_imx6ul_threadx.yaml')
         regions = profile_loader.get_memory_regions(profile)
         self.dump_reader = DumpReader(self.DUMP_PATH, regions)
         self.keywords = profile.get('keyword', [])

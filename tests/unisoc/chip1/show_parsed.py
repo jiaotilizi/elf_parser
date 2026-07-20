@@ -16,7 +16,7 @@ SCENARIO_DIR = os.path.dirname(os.path.abspath(__file__))
 def main():
     elf_path = os.path.join(SCENARIO_DIR, 'output', 'QogirS6_PS_modem.axf')
     dump_path = os.path.join(SCENARIO_DIR, 'output', '2026_07_03_14_19_35_658_1.mem')
-    profile_name = 'unisoc/chip1'
+    profile_name = 'profiles/unisoc/chip1.yaml'
 
     print(f"ELF  : {elf_path}")
     print(f"Dump : {dump_path}")

@@ -26,6 +26,9 @@ import json
 import sys
 import os
 
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+
 try:
     from core.elf_parser import ELFParser
     from core.dump_reader import DumpReader
@@ -52,6 +55,7 @@ def main():
     parser.add_argument('--dump-symbol', help='Dump specific symbol by name')
     parser.add_argument('--search-symbol', help='Search symbols by pattern')
     parser.add_argument('--display', help='Display scheme: cli_basic, cli_interactive, web_gui')
+    parser.add_argument('--outfile', help='Output file path for display output')
     
     args = parser.parse_args()
     
@@ -81,7 +85,7 @@ def main():
         elif args.search_symbol:
             search_symbols(results['elf_parser'], args.search_symbol)
         elif args.display:
-            show_display(args.display, results)
+            show_display(args.display, results, args.outfile)
         else:
             output_results(results, args.output)
             
@@ -164,13 +168,27 @@ def analyze(elf_path: str, dump_path: str, profile_name: str) -> dict:
     }
 
 
-def show_display(scheme: str, results: dict):
+def show_display(scheme: str, results: dict, outfile: str = None):
     profile = results['profile']
     
     data_adapter = DataAdapter(results['context'])
     
     display = DisplayFactory.create(scheme, profile, data_adapter)
+    
+    import sys
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    
+    if outfile:
+        sys.stdout = open(outfile, 'w', encoding='utf-8')
+        sys.stderr = sys.stdout
+    
     display.run()
+    
+    if outfile:
+        sys.stdout.close()
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
 
 
 def list_profiles():

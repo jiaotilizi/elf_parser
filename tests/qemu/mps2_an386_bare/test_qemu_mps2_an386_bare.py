@@ -35,7 +35,7 @@ class TestQEMUFirmwareAutoParse(unittest.TestCase):
 
         self.elf_parser = ELFParser(self.ELF_PATH)
         profile_loader = ProfileLoader()
-        profile = profile_loader.load_profile('qemu/mps2_an386_bare')
+        profile = profile_loader.load_profile('profiles/qemu/mps2_an386_bare.yaml')
         regions = profile_loader.get_memory_regions(profile)
         self.dump_reader = DumpReader(self.DUMP_PATH, regions)
 

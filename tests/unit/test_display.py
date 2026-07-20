@@ -43,14 +43,14 @@ class TestResourceMetadata(unittest.TestCase):
         meta = ResourceMetadata('tasks', 'Tasks')
         self.assertEqual(meta.resource_type, 'tasks')
         self.assertEqual(meta.label, 'Tasks')
-        self.assertEqual(meta.icon, '📦')
+        self.assertEqual(meta.icon, '[Resource]')
         self.assertEqual(meta.primary_key, 'address')
         self.assertEqual(meta.fields, [])
     
     def test_custom_fields(self):
         fields = [{'name': 'name', 'label': 'Name', 'type': 'string'}]
-        meta = ResourceMetadata('tasks', 'Tasks', icon='🧵', primary_key='id', fields=fields)
-        self.assertEqual(meta.icon, '🧵')
+        meta = ResourceMetadata('tasks', 'Tasks', icon='[Tasks]', primary_key='id', fields=fields)
+        self.assertEqual(meta.icon, '[Tasks]')
         self.assertEqual(meta.primary_key, 'id')
         self.assertEqual(len(meta.fields), 1)
         self.assertEqual(meta.fields[0]['name'], 'name')

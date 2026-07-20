@@ -44,7 +44,7 @@ class TestELFParserPublicAPI(unittest.TestCase):
             cls.dump_data = f.read()
         # 必须通过 ProfileLoader 加载 regions，否则 DumpReader 默认起始地址为 0
         loader = ProfileLoader()
-        profile = loader.load_profile('bss_simulated')
+        profile = loader.load_profile('profiles/bss_simulated.yaml')
         regions = loader.get_memory_regions(profile)
         cls.dump_reader = DumpReader(DUMP_PATH, regions)
 

@@ -48,10 +48,10 @@ class CliBasicDisplay(DisplayBase):
     
     def _print_section(self, title: str, icon: str, data: List[Dict], metadata: ResourceMetadata):
         if not data:
-            print(f"\n{icon} [{title}] Empty")
+            print(f"\n{icon} Empty")
             return
         
-        print(f"\n{icon} [{title}]")
+        print(f"\n{icon}")
         print("-" * 80)
         
         if metadata.fields:
@@ -110,6 +110,10 @@ class CliBasicDisplay(DisplayBase):
         if not self.data_adapter:
             print("Error: Data adapter not provided")
             return
+        
+        import sys
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
         
         try:
             resource_types = self.data_adapter.get_all_resource_types()

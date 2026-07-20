@@ -30,7 +30,7 @@ class DataAdapter:
         'tasks': ResourceMetadata(
             resource_type='tasks',
             label='Tasks',
-            icon='🧵',
+            icon='[Tasks]',
             primary_key='address',
             fields=[
                 {'name': 'address', 'label': 'Address', 'type': 'hex'},
@@ -45,7 +45,7 @@ class DataAdapter:
         'mutexes': ResourceMetadata(
             resource_type='mutexes',
             label='Mutexes',
-            icon='🔒',
+            icon='[Mutexes]',
             primary_key='address',
             fields=[
                 {'name': 'address', 'label': 'Address', 'type': 'hex'},
@@ -57,7 +57,7 @@ class DataAdapter:
         'semaphores': ResourceMetadata(
             resource_type='semaphores',
             label='Semaphores',
-            icon='🚦',
+            icon='[Semaphores]',
             primary_key='address',
             fields=[
                 {'name': 'address', 'label': 'Address', 'type': 'hex'},
@@ -69,7 +69,7 @@ class DataAdapter:
         'queues': ResourceMetadata(
             resource_type='queues',
             label='Queues',
-            icon='📭',
+            icon='[Queues]',
             primary_key='address',
             fields=[
                 {'name': 'address', 'label': 'Address', 'type': 'hex'},
@@ -81,7 +81,7 @@ class DataAdapter:
         'events': ResourceMetadata(
             resource_type='events',
             label='Event Flags',
-            icon='🎯',
+            icon='[Events]',
             primary_key='address',
             fields=[
                 {'name': 'address', 'label': 'Address', 'type': 'hex'},
@@ -92,7 +92,7 @@ class DataAdapter:
         'timers': ResourceMetadata(
             resource_type='timers',
             label='Timers',
-            icon='⏱️',
+            icon='[Timers]',
             primary_key='address',
             fields=[
                 {'name': 'address', 'label': 'Address', 'type': 'hex'},
@@ -105,7 +105,7 @@ class DataAdapter:
         'block_pools': ResourceMetadata(
             resource_type='block_pools',
             label='Block Pools',
-            icon='🧱',
+            icon='[BlockPools]',
             primary_key='address',
             fields=[
                 {'name': 'address', 'label': 'Address', 'type': 'hex'},
@@ -117,7 +117,7 @@ class DataAdapter:
         'byte_pools': ResourceMetadata(
             resource_type='byte_pools',
             label='Byte Pools',
-            icon='💧',
+            icon='[BytePools]',
             primary_key='address',
             fields=[
                 {'name': 'address', 'label': 'Address', 'type': 'hex'},
@@ -129,7 +129,7 @@ class DataAdapter:
         'test_points': ResourceMetadata(
             resource_type='test_points',
             label='Test Points',
-            icon='✅',
+            icon='[TestPoints]',
             primary_key='id',
             fields=[
                 {'name': 'id', 'label': 'ID', 'type': 'number'},
@@ -141,7 +141,7 @@ class DataAdapter:
         'assert_info': ResourceMetadata(
             resource_type='assert_info',
             label='Assert Info',
-            icon='⚠️',
+            icon='[Assert]',
             primary_key='address',
             fields=[
                 {'name': 'address', 'label': 'Address', 'type': 'hex'},
@@ -153,7 +153,7 @@ class DataAdapter:
         'trace_buffer': ResourceMetadata(
             resource_type='trace_buffer',
             label='Trace Buffer',
-            icon='📊',
+            icon='[Trace]',
             primary_key='timestamp',
             fields=[
                 {'name': 'timestamp', 'label': 'Time', 'type': 'number'},

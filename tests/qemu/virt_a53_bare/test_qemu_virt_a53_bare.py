@@ -32,7 +32,7 @@ class TestQEMUAArch64FirmwareAutoParse(unittest.TestCase):
 
         self.elf_parser = ELFParser(self.ELF_PATH)
         profile_loader = ProfileLoader()
-        profile = profile_loader.load_profile('qemu/virt_a53_bare')
+        profile = profile_loader.load_profile('profiles/qemu/virt_a53_bare.yaml')
         regions = profile_loader.get_memory_regions(profile)
         self.dump_reader = DumpReader(self.DUMP_PATH, regions)
 

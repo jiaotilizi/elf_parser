@@ -23,7 +23,7 @@ class TestQEMUStm32vldiscoveryFirmwareAutoParse(unittest.TestCase):
 
         self.elf_parser = ELFParser(self.ELF_PATH)
         profile_loader = ProfileLoader()
-        profile = profile_loader.load_profile('qemu/stm32vldiscovery_bare')
+        profile = profile_loader.load_profile('profiles/qemu/stm32vldiscovery_bare.yaml')
         regions = profile_loader.get_memory_regions(profile)
         self.dump_reader = DumpReader(self.DUMP_PATH, regions)
 
@@ -58,7 +58,7 @@ class TestQEMUStm32vldiscoveryFirmwareAutoParse(unittest.TestCase):
 
     def test_stm32_keyword_match(self):
         profile_loader = ProfileLoader()
-        profile = profile_loader.load_profile('qemu/stm32vldiscovery_bare')
+        profile = profile_loader.load_profile('profiles/qemu/stm32vldiscovery_bare.yaml')
         keywords = profile.get('keyword', [])
         
         if keywords:

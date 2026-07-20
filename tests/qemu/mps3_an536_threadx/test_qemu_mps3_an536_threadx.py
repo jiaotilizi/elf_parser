@@ -20,7 +20,7 @@ class TestQEMUMps3An536ThreadXFirmwareAutoParse(unittest.TestCase):
         assert os.path.exists(cls.dump_path), f"Dump not found: {cls.dump_path}"
 
         loader = ProfileLoader()
-        profile = loader.load_profile('qemu/mps3_an536_threadx')
+        profile = loader.load_profile('profiles/qemu/mps3_an536_threadx.yaml')
         regions = loader.get_memory_regions(profile)
 
         cls.elf_parser = ELFParser(cls.elf_path)

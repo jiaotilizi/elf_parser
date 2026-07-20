@@ -30,7 +30,7 @@ class ResourceMetadata:
                  primary_key: str = 'address', fields: List[Dict] = None):
         self.resource_type = resource_type
         self.label = label
-        self.icon = icon or '📦'
+        self.icon = icon or '[Resource]'
         self.primary_key = primary_key
         self.fields = fields or []
 

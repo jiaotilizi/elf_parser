@@ -75,47 +75,24 @@ class ProfileLoader:
             profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
         self.profiles_dir = os.path.abspath(profiles_dir)
     
-    def load_profile(self, profile_name: str) -> Optional[Dict[str, Any]]:
-        profile_path = self._find_profile(profile_name)
-        if not profile_path:
-            logger.warning(f"Profile not found: {profile_name}")
-            return None
+    def load_profile(self, profile_name: str) -> Dict[str, Any]:
+        profile_path = os.path.abspath(profile_name)
+        
+        if not os.path.exists(profile_path):
+            raise ProfileError(f"Profile not found: {profile_path}")
         
         try:
             with open(profile_path, 'r') as f:
-                return yaml.safe_load(f)
+                content = yaml.safe_load(f)
+                if content is None:
+                    raise ProfileError(f"Profile file is empty: {profile_path}")
+                return content
         except yaml.YAMLError as e:
             logger.error(f"YAML parse error in {profile_path}: {e}")
-            raise ProfileError(f"Failed to parse profile {profile_name}: {e}")
+            raise ProfileError(f"Failed to parse profile {profile_path}: {e}")
         except IOError as e:
             logger.error(f"Cannot read profile {profile_path}: {e}")
-            raise ProfileError(f"Cannot read profile {profile_name}: {e}")
-    
-    def _find_profile(self, profile_name: str) -> Optional[str]:
-        if os.path.isabs(profile_name):
-            if os.path.exists(profile_name):
-                return profile_name
-            return None
-        
-        paths_to_check = [
-            os.path.join(self.profiles_dir, f"{profile_name}.yaml"),
-            os.path.join(self.profiles_dir, f"{profile_name}.yml"),
-            os.path.join(self.profiles_dir, profile_name, "config.yaml"),
-            os.path.join(self.profiles_dir, profile_name, "config.yml"),
-        ]
-        
-        for path in paths_to_check:
-            if os.path.exists(path):
-                return path
-        
-        for root, dirs, files in os.walk(self.profiles_dir):
-            for filename in files:
-                if filename.endswith(('.yaml', '.yml')):
-                    filepath = os.path.join(root, filename)
-                    if profile_name in filepath or profile_name == filename[:-5]:
-                        return filepath
-        
-        return None
+            raise ProfileError(f"Cannot read profile {profile_path}: {e}")
     
     def list_profiles(self) -> List[Dict[str, Any]]:
         profiles = []

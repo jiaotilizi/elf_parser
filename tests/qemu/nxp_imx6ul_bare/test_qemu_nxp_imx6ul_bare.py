@@ -20,7 +20,7 @@ class TestQEMUNxpImx6ulFirmwareAutoParse(unittest.TestCase):
 
         self.elf_parser = ELFParser(self.ELF_PATH)
         profile_loader = ProfileLoader()
-        profile = profile_loader.load_profile('qemu/nxp_imx6ul_bare')
+        profile = profile_loader.load_profile('profiles/qemu/nxp_imx6ul_bare.yaml')
         regions = profile_loader.get_memory_regions(profile)
         self.dump_reader = DumpReader(self.DUMP_PATH, regions)
 
@@ -41,7 +41,7 @@ class TestQEMUNxpImx6ulFirmwareAutoParse(unittest.TestCase):
 
     def test_nxp_imx6ul_keyword_match(self):
         profile_loader = ProfileLoader()
-        profile = profile_loader.load_profile('qemu/nxp_imx6ul_bare')
+        profile = profile_loader.load_profile('profiles/qemu/nxp_imx6ul_bare.yaml')
         keywords = profile.get('keyword', [])
 
         if keywords:

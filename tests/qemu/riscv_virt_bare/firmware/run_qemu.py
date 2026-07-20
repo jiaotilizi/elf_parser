@@ -30,7 +30,7 @@ SCENARIO_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def main():
     loader = ProfileLoader()
-    profile = loader.load_profile('qemu/riscv_virt_bare')
+    profile = loader.load_profile('profiles/qemu/riscv_virt_bare.yaml')
     regions = loader.get_memory_regions(profile)
 
     runner = runner_from_profile(
