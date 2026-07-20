@@ -409,18 +409,160 @@ class DataAdapter:
 | M3.3 | 资源导航树 | 第 7 周 |
 | M3.4 | 导出功能（JSON/CSV） | 第 7 周 |
 
-### Phase 4：高级特性（v1.3+）
+### Phase 4：高级特性（未来备选）
 
-| 里程碑 | 内容 | 时间 |
+> **注意**：以下特性涉及实时调试、反汇编、调试器协议等复杂内容，实现成本高、维护难度大。当前优先方向是**离线分析 + AI 智能分析**，以下作为长期备选方案。
+
+| 里程碑 | 内容 | 状态 |
 |--------|------|------|
-| M4.1 | 实时调试连接（J-Link/OpenOCD） | 第 8 周 |
-| M4.2 | 内存可视化 | 第 9 周 |
-| M4.3 | 断点设置与追踪 | 第 10 周 |
-| M4.4 | 性能分析（任务运行时间统计） | 第 11 周 |
+| M4.1 | 实时调试连接（J-Link/OpenOCD） | 备选 |
+| M4.2 | 内存可视化 | 备选 |
+| M4.3 | 断点设置与追踪 | 备选 |
+| M4.4 | 性能分析（任务运行时间统计） | 备选 |
 
-## 8. 技术栈选择
+**离线分析 vs 在线分析对比**：
 
-### 8.1 推荐方案：Qt/PySide6
+| 维度 | 离线分析 | 在线分析 |
+|------|---------|---------|
+| 实现复杂度 | 低 | 高 |
+| 依赖 | 仅 ELF/Dump 文件 | J-Link/OpenOCD/调试器 |
+| 适用场景 | 崩溃分析、后验调试 | 实时监控、动态调试 |
+| 技术栈 | pyelftools | GDB Protocol、反汇编引擎 |
+| 维护成本 | 低 | 高（需适配多种调试器） |
+| 扩展性 | 易（AI 集成） | 难（协议复杂） |
+
+**当前推荐策略**：
+- **短期**：专注离线分析，打造稳定的 ELF/Dump 分析工具
+- **中期**：集成 AI 能力，提供智能分析、问题诊断
+- **长期**：根据业务需求评估是否添加在线调试功能
+
+## 8. AI 集成规划（中期重点）
+
+### 8.1 AI 能力定位
+
+将 ELF Parser 转化为**AI 驱动的智能分析工具**，核心价值：
+
+| 能力 | 描述 | 应用场景 |
+|------|------|---------|
+| **智能诊断** | 分析 dump 数据，自动识别问题 | 死锁检测、栈溢出、任务优先级反转 |
+| **代码关联** | 结合 DWARF 信息，定位问题代码 | 异常堆栈解析、函数调用链分析 |
+| **自然语言查询** | 用自然语言查询资源信息 | "哪些任务阻塞在信号量上？" |
+| **根因分析** | 基于历史数据和知识库，推断问题根因 | 崩溃分析、性能问题定位 |
+| **智能建议** | 基于分析结果提供优化建议 | 栈大小调整、优先级优化 |
+
+### 8.2 架构设计
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         AI Layer                                   │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                     AI Service                              │   │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │   │
+│  │  │ Prompt       │  │ LLM Client   │  │ Knowledge Base   │  │   │
+│  │  │ Engineering  │  │ (OpenAI/     │  │ (RTOS Kernel     │  │   │
+│  │  │              │  │  Qwen/LLama) │  │  Source, Bug     │  │   │
+│  │  └──────┬───────┘  └──────┬───────┘  │  Reports,        │  │   │
+│  │         │                 │          │  Best Practices) │  │   │
+│  │         └─────────────────┼──────────┘                  │  │   │
+│  │                           ▼                            │  │   │
+│  │               ┌──────────────────┐                      │  │   │
+│  │               │  AI Analyzer     │                      │  │   │
+│  │               │  - 智能诊断      │                      │  │   │
+│  │               │  - 代码关联      │                      │  │   │
+│  │               │  - 根因分析      │                      │  │   │
+│  │               │  - 智能建议      │                      │  │   │
+│  │               └────────┬─────────┘                      │  │   │
+│  └───────────────────────┼─────────────────────────────────┘  │   │
+│                          │                                     │   │
+│                          ▼                                     │   │
+│  ┌─────────────────────────────────────────────────────────┐   │   │
+│  │              AI Plugin                                  │   │   │
+│  │  - 集成到 PluginContext                                │   │   │
+│  │  - 提供 AI 分析命令                                    │   │   │
+│  │  - 支持自然语言查询                                    │   │   │
+│  └─────────────────────────────────────────────────────────┘   │   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 8.3 AI 插件设计
+
+```python
+class AIAnalyzerPlugin(ModulePlugin):
+    def __init__(self):
+        super().__init__("ai_analyzer", "1.0", "AI 智能分析插件")
+    
+    def initialize(self, context: Dict[str, Any]) -> bool:
+        self._elf_parser = context.get('elf_parser')
+        self._dump_reader = context.get('dump_reader')
+        self._llm_client = self._init_llm_client()
+        self._knowledge_base = self._load_knowledge_base()
+        return True
+    
+    def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """执行 AI 分析"""
+        analysis = self._analyze(context)
+        return {
+            'ai_analysis': analysis
+        }
+    
+    def query(self, question: str) -> str:
+        """自然语言查询接口"""
+        prompt = self._build_prompt(question)
+        response = self._llm_client.complete(prompt)
+        return response
+    
+    def diagnose(self) -> Dict[str, Any]:
+        """智能诊断接口"""
+        data = self._collect_analysis_data()
+        prompt = self._build_diagnosis_prompt(data)
+        result = self._llm_client.complete(prompt)
+        return self._parse_diagnosis_result(result)
+```
+
+### 8.4 命令行 AI 命令
+
+```
+> ai.query "哪些任务阻塞在信号量上？"
+> ai.diagnose
+> ai.analyze deadlock
+> ai.suggest stack
+> ai.explain 0x20001000
+```
+
+### 8.5 知识库构建
+
+| 知识源 | 内容 | 存储方式 |
+|--------|------|---------|
+| RTOS 内核源码 | FreeRTOS/ThreadX 源代码 | 向量数据库 |
+| Bug 报告 | 已知问题和解决方案 | 向量数据库 |
+| 最佳实践 | RTOS 开发规范 | 向量数据库 |
+| DWARF 元数据 | 类型信息、结构体定义 | 实时查询 |
+| 分析历史 | 过往分析结果 | 本地存储 |
+
+### 8.6 AI 集成优势
+
+| 维度 | 传统工具 | AI 驱动工具 |
+|------|---------|------------|
+| 问题发现 | 被动查看数据 | 主动诊断问题 |
+| 知识门槛 | 需要深入了解 RTOS | AI 解释专业知识 |
+| 分析效率 | 逐条查看 | 智能汇总 |
+| 问题定位 | 手动追踪 | 自动关联代码 |
+| 学习成本 | 高 | 低（自然语言交互） |
+
+### 8.7 实施计划
+
+| 阶段 | 内容 | 时间 |
+|------|------|------|
+| AI-1 | AI 插件框架搭建 | Phase 2 完成后 |
+| AI-2 | LLM 客户端集成（OpenAI/Qwen） | AI-1 后 2 周 |
+| AI-3 | 知识库构建（RTOS 源码） | AI-2 后 3 周 |
+| AI-4 | 智能诊断功能 | AI-3 后 2 周 |
+| AI-5 | 自然语言查询 | AI-4 后 2 周 |
+| AI-6 | 智能建议功能 | AI-5 后 2 周 |
+
+## 9. 技术栈选择
+
+### 9.1 推荐方案：Qt/PySide6
 
 | 维度 | 理由 |
 |------|------|
@@ -430,7 +572,7 @@ class DataAdapter:
 | 拖拽支持 | 原生支持文件拖拽 |
 | 社区 | 大量 Qt/PySide6 资源和文档 |
 
-### 8.2 备选方案：Web GUI（Flask + HTML/JS）
+### 9.2 备选方案：Web GUI（Flask + HTML/JS）
 
 | 维度 | 理由 |
 |------|------|
@@ -438,13 +580,13 @@ class DataAdapter:
 | 远程访问 | 支持远程调试 |
 | 跨平台 | 只需浏览器 |
 
-### 8.3 最终决策
+### 9.3 最终决策
 
 - **优先采用 Qt/PySide6** 作为主 GUI 框架
 - **保留 Web GUI** 作为轻量级备选方案
 - Qt GUI 作为主要开发方向，Web GUI 保持维护
 
-## 9. 依赖清单
+## 10. 依赖清单
 
 | 依赖 | 版本 | 用途 |
 |------|------|------|
@@ -454,8 +596,12 @@ class DataAdapter:
 | pyelftools | >= 0.28 | ELF/DWARF 解析 |
 | pyyaml | >= 6.0 | YAML 配置解析 |
 | flask | >= 2.0 | Web GUI 后端 |
+| openai | >= 1.0 | AI 接口（OpenAI） |
+| qwen-api | >= 1.0 | AI 接口（Qwen） |
+| langchain | >= 0.1 | AI 框架 |
+| chromadb | >= 0.4 | 向量数据库 |
 
-## 10. 目录结构规划
+## 11. 目录结构规划
 
 ```
 elf_parser/
@@ -472,13 +618,21 @@ elf_parser/
 │   └── styles/                       # 样式文件
 │       ├── light.qss                 # 浅色主题
 │       └── dark.qss                  # 深色主题
+├── ai/                               # AI 模块（新增）
+│   ├── __init__.py
+│   ├── ai_analyzer.py                # AI 分析器
+│   ├── llm_client.py                 # LLM 客户端（OpenAI/Qwen/LLama）
+│   ├── knowledge_base.py             # 知识库管理
+│   ├── prompt_engineer.py            # Prompt 工程
+│   └── plugins/
+│       └── ai_analyzer_plugin.py     # AI 插件
 ├── core/                             # 核心模块（不变）
 ├── plugins/                          # 插件模块（不变）
 ├── display/                          # 显示模块（不变）
 └── main.py                           # 入口文件（新增 GUI 启动参数）
 ```
 
-## 11. 启动方式
+## 12. 启动方式
 
 ```bash
 # CLI 模式（现有）
@@ -489,17 +643,24 @@ python main.py --gui
 
 # GUI + 预加载文件
 python main.py --gui --elf test.elf --dump test.bin --profile xxx
+
+# AI 分析模式
+python main.py --elf test.elf --dump test.bin --profile xxx --ai
 ```
 
-## 12. 总结
+## 13. 总结
 
 本文档规划了 ELF Parser GUI 的完整设计，包括：
 
 1. **主窗口框架**：菜单、工具栏、导航面板、内容区、命令行
-2. **Device 选择**：弹窗下拉列表，动态加载插件
+2. **Device 选择**：基于 Profile 的芯片-OS 两级选择
 3. **RTOS/Module 菜单**：根据 Device 配置动态更新
 4. **命令行系统**：Trace32 风格命令，支持拖拽加载
 5. **跨资源导航**：Jump Marker、历史栈、详情视图
-6. **分阶段实现**：4 个阶段，从基础框架到高级特性
+6. **AI 集成规划**：智能诊断、自然语言查询、知识库、智能建议
+7. **分阶段实现**：基础框架 → 导航功能 → 交互增强 → AI 能力
 
-采用 Qt/PySide6 作为主要技术栈，兼顾跨平台性和桌面体验。
+**核心策略**：
+- **短期**：专注离线分析，打造稳定的 ELF/Dump 分析工具
+- **中期**：集成 AI 能力，提供智能分析和问题诊断
+- **长期**：在线调试作为备选方案，根据业务需求评估
