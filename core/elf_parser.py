@@ -229,61 +229,49 @@ class ELFParser:
         return None
     
     def _build_type_cache(self):
+        """索引优先 + 懒加载：只建索引，不做任何解析。实际查询时才解析并缓存。"""
         start = time.time()
         if not self.dwarfinfo:
             return
 
-        # 第一遍：收集所有类型 DIE，按 offset 建立索引
+        _RELEVANT_TAGS = frozenset({
+            'DW_TAG_structure_type', 'DW_TAG_union_type',
+            'DW_TAG_enumeration_type', 'DW_TAG_base_type',
+            'DW_TAG_typedef', 'DW_TAG_pointer_type',
+            'DW_TAG_array_type', 'DW_TAG_const_type',
+            'DW_TAG_volatile_type', 'DW_TAG_subroutine_type',
+            'DW_TAG_variable',
+        })
+
         die_by_offset: Dict[int, 'DIE'] = {}
+        type_name_to_offset: Dict[str, int] = {}
+        var_name_to_offset: Dict[str, int] = {}
         die_count = 0
+
         for cu in self.dwarfinfo.iter_CUs():
             for die in cu.iter_DIEs():
-                if die.tag:
-                    die_by_offset[die.offset] = die
-                    die_count += 1
+                if not die.tag or die.tag not in _RELEVANT_TAGS:
+                    continue
+                die_by_offset[die.offset] = die
+                die_count += 1
 
-        # 第二遍：构建类型信息
-        for die in die_by_offset.values():
-            tag = die.tag
-            type_info = None
-
-            if tag in ('DW_TAG_structure_type', 'DW_TAG_union_type'):
-                type_info = self._parse_struct_die(die, die_by_offset)
-            elif tag == 'DW_TAG_enumeration_type':
-                type_info = self._parse_enum_die(die)
-            elif tag == 'DW_TAG_base_type':
-                type_info = self._parse_base_type(die)
-            elif tag == 'DW_TAG_typedef':
-                type_info = self._parse_typedef_die(die, die_by_offset)
-            elif tag == 'DW_TAG_pointer_type':
-                type_info = self._parse_pointer_die(die, die_by_offset)
-            elif tag == 'DW_TAG_array_type':
-                type_info = self._parse_array_die(die, die_by_offset)
-
-            if type_info:
-                # 把 typedef 名字、有名字的结构体/枚举/基础类型都登记到 _struct_type_cache
-                name = type_info.get('name')
-                if name:
-                    self._struct_type_cache[name] = type_info
-
-        # 第三遍：构建全局变量的类型索引（按变量名 → 类型信息）
-        self._var_type_cache: Dict[str, Dict[str, Any]] = {}
-        for die in die_by_offset.values():
-            if die.tag == 'DW_TAG_variable':
                 name_attr = die.attributes.get('DW_AT_name')
                 if not name_attr:
                     continue
-                var_name = name_attr.value.decode('utf-8', errors='replace')
-                ref_die = self._resolve_type_ref(die, die_by_offset)
-                if ref_die:
-                    var_type_info = self._parse_any_die(ref_die, die_by_offset)
-                    if var_type_info:
-                        # 同时存"按原始类型偏移"和"按变量名"两份索引
-                        self._var_type_cache[var_name] = var_type_info
+                name = name_attr.value.decode('utf-8', errors='replace')
+                if die.tag == 'DW_TAG_variable':
+                    var_name_to_offset[name] = die.offset
+                else:
+                    type_name_to_offset[name] = die.offset
+
+        self._die_by_offset = die_by_offset
+        self._type_name_to_offset = type_name_to_offset
+        self._var_name_to_offset = var_name_to_offset
+        self._var_type_cache: Dict[str, Dict[str, Any]] = {}
 
         elapsed = time.time() - start
-        logger.debug("_build_type_cache: %d DIEs, %d types, %d vars, %.3fs",
-                     die_count, len(self._struct_type_cache), len(self._var_type_cache), elapsed)
+        logger.debug("_build_type_cache: %d DIEs indexed, %.3fs",
+                     die_count, elapsed)
 
     def _resolve_type_ref(self, die: 'DIE', die_by_offset: Dict[int, 'DIE']) -> Optional['DIE']:
         """解析 DW_AT_type 引用，把 CU 相对偏移转为 .debug_info 绝对偏移再查找 DIE。
@@ -606,8 +594,8 @@ class ELFParser:
         if not sym:
             return None
 
-        # 直接用 DWARF 中变量声明的真实类型
-        type_info = self._var_type_cache.get(var_name)
+        # 通过 get_variable_type 触发懒加载（首次查询时按需解析 DWARF 类型）
+        type_info = self.get_variable_type(var_name)
         if not type_info:
             return None
 
@@ -796,7 +784,7 @@ class ELFParser:
         return result
 
     def get_variable_type(self, name: str) -> Optional[Dict[str, Any]]:
-        """获取全局变量的 DWARF 类型信息。
+        """获取全局变量的 DWARF 类型信息（懒加载：首次查询时按需解析）。
 
         返回类型信息字典，包含 kind、name、byte_size 等字段。
         对于指针类型，ref_type 包含被指向类型的完整信息。
@@ -808,7 +796,24 @@ class ELFParser:
         Returns:
             类型信息字典，如果变量不在 DWARF 中则返回 None
         """
-        return self._var_type_cache.get(name)
+        if name in self._var_type_cache:
+            return self._var_type_cache[name]
+
+        offset = self._var_name_to_offset.get(name)
+        if offset is None:
+            return None
+
+        die = self._die_by_offset.get(offset)
+        if die is None or die.tag != 'DW_TAG_variable':
+            return None
+
+        ref_die = self._resolve_type_ref(die, self._die_by_offset)
+        if ref_die:
+            var_type_info = self._parse_any_die(ref_die, self._die_by_offset)
+            if var_type_info:
+                self._var_type_cache[name] = var_type_info
+                return var_type_info
+        return None
 
     def find_symbols_by_pattern(self, pattern: str) -> List[Dict[str, Any]]:
         result = []
@@ -824,9 +829,8 @@ class ELFParser:
         return result
     
     def find_function_by_address(self, address: int) -> Optional[Dict[str, Any]]:
-        for low_pc, high_pc, cu_idx in self._cu_cache:
+        for low_pc, high_pc, cu in self._cu_cache:
             if low_pc <= address < high_pc:
-                cu = list(self.dwarfinfo.iter_CUs())[cu_idx]
                 return self._search_function_in_cu(address, cu)
         
         return None
@@ -855,7 +859,22 @@ class ELFParser:
         return None
     
     def get_struct_type(self, struct_name: str) -> Optional[Dict[str, Any]]:
-        return self._struct_type_cache.get(struct_name)
+        """懒加载：首次查询时按需解析，之后命中缓存。"""
+        if struct_name in self._struct_type_cache:
+            return self._struct_type_cache[struct_name]
+
+        offset = self._type_name_to_offset.get(struct_name)
+        if offset is None:
+            return None
+
+        die = self._die_by_offset.get(offset)
+        if die is None:
+            return None
+
+        type_info = self._parse_any_die(die, self._die_by_offset)
+        if type_info:
+            self._struct_type_cache[struct_name] = type_info
+        return type_info
 
     def _find_segment_for_address(self, address: int, size: int = 0) -> Optional[Dict[str, Any]]:
         if not self._sorted_segment_ranges:

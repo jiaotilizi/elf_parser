@@ -19,6 +19,10 @@
   ```
 
 通过 `runner_from_profile(profile_name, scenario_dir)` 工厂构造。
+
+跨平台兼容：
+  - Windows: 使用 TCP QMP 连接，路径使用本地临时目录
+  - macOS/Linux: 使用 Unix Socket QMP 连接，路径使用 /tmp
 """
 import os
 import sys
@@ -27,7 +31,82 @@ import time
 import socket
 import signal
 import subprocess
+import platform
+import tempfile
 from typing import Dict, List, Optional, Any
+
+
+# ── 平台检测与辅助函数 ──────────────────────────────────────────
+
+def get_os_type() -> str:
+    """返回操作系统类型: 'windows', 'macos', 'linux'."""
+    sys_type = platform.system()
+    if sys_type == 'Windows':
+        return 'windows'
+    elif sys_type == 'Darwin':
+        return 'macos'
+    else:
+        return 'linux'
+
+
+def get_temp_path(filename: str) -> str:
+    """返回跨平台的临时文件路径."""
+    return os.path.join(tempfile.gettempdir(), filename)
+
+
+def get_qmp_socket_path() -> str:
+    """返回 QMP socket 路径，Windows 使用 TCP，其他使用 Unix Socket."""
+    os_type = get_os_type()
+    if os_type == 'windows':
+        return 'tcp:localhost:4444'
+    else:
+        return '/tmp/qemu-qmp.sock'
+
+
+def find_qemu_binary(qemu_binary: str) -> str:
+    """在 PATH 中查找 QEMU 二进制文件，处理 Windows .exe 后缀."""
+    os_type = get_os_type()
+    
+    if os.path.isabs(qemu_binary) and os.path.exists(qemu_binary):
+        return qemu_binary
+    
+    if os_type == 'windows' and not qemu_binary.endswith('.exe'):
+        candidate = qemu_binary + '.exe'
+        if os.path.isabs(candidate) and os.path.exists(candidate):
+            return candidate
+    
+    for path in os.environ.get('PATH', '').split(os.pathsep):
+        if not path:
+            continue
+        candidate = os.path.join(path, qemu_binary)
+        if os.path.exists(candidate):
+            return candidate
+        if os_type == 'windows':
+            candidate_exe = candidate + '.exe'
+            if os.path.exists(candidate_exe):
+                return candidate_exe
+    
+    return qemu_binary
+
+
+def kill_process(proc: subprocess.Popen):
+    """跨平台安全终止进程."""
+    os_type = get_os_type()
+    try:
+        if os_type == 'windows':
+            subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)],
+                          capture_output=True, timeout=5)
+        else:
+            proc.send_signal(signal.SIGTERM)
+            proc.wait(timeout=3)
+    except (subprocess.TimeoutExpired, ProcessLookupError):
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+_IS_WINDOWS = get_os_type() == 'windows'
 
 # 让脚本能 import 到 core 模块（在 elf_parser/ 下）
 _ELF_PARSER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -129,7 +208,7 @@ class QemuRunner:
         self.ram_size = ram_size
         self.run_seconds = run_seconds
         self.extra_args = extra_args or []
-        self.qmp_socket = qmp_socket or '/tmp/qemu-qmp.sock'
+        self.qmp_socket = qmp_socket or get_qmp_socket_path()
         self.wait_symbol_addr = wait_symbol_addr
 
     # ── 命令构造 ──────────────────────────────────────────────
@@ -140,7 +219,7 @@ class QemuRunner:
             '-machine', self.machine,
             '-nographic',
             '-serial', 'null',
-            '-qmp', f'unix:{self.qmp_socket},server,nowait',
+            '-qmp', f'{self.qmp_socket},server,nowait',
         ]
         # kernel_arg 可能是 '-kernel'（Cortex-M/A 直接加载到 VMA）或
         # '-device' + 'loader,file=...'（RISC-V sifive_e 模式）
@@ -210,7 +289,10 @@ class QemuRunner:
             return False
 
         # 清理旧 socket
-        if os.path.exists(self.qmp_socket):
+        if _IS_WINDOWS:
+            # TCP socket 不需要清理文件
+            pass
+        elif os.path.exists(self.qmp_socket):
             os.remove(self.qmp_socket)
 
         qemu_cmd = self.build_qemu_cmd()
@@ -232,14 +314,22 @@ class QemuRunner:
             return False
 
         # 连接 QMP
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        if _IS_WINDOWS:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            qmp_host, qmp_port = 'localhost', 4444
+        else:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+
         connected = False
         for _ in range(20):
             try:
-                sock.connect(self.qmp_socket)
+                if _IS_WINDOWS:
+                    sock.connect((qmp_host, qmp_port))
+                else:
+                    sock.connect(self.qmp_socket)
                 connected = True
                 break
-            except (FileNotFoundError, ConnectionRefusedError):
+            except (FileNotFoundError, ConnectionRefusedError, ConnectionError):
                 time.sleep(0.1)
 
         if not connected:
@@ -266,14 +356,15 @@ class QemuRunner:
             if hasattr(self, 'wait_symbol_addr') and self.wait_symbol_addr is not None:
                 if verbose:
                     print(f"  等待 : 检查地址 0x{self.wait_symbol_addr:x} ...")
+                wait_check_path = get_temp_path('qemu_wait_check.bin')
                 for _ in range(50):
                     result = qmp.execute("pmemsave", {
                         "val": self.wait_symbol_addr,
                         "size": 4,
-                        "filename": "/tmp/qemu_wait_check.bin"
+                        "filename": wait_check_path
                     })
                     if 'error' not in result:
-                        with open('/tmp/qemu_wait_check.bin', 'rb') as f:
+                        with open(wait_check_path, 'rb') as f:
                             val = int.from_bytes(f.read(4), 'little')
                             if val != 0:
                                 if verbose:
@@ -283,6 +374,8 @@ class QemuRunner:
                 else:
                     if verbose:
                         print(f"  等待 : 超时，继续执行")
+                if os.path.exists(wait_check_path):
+                    os.remove(wait_check_path)
 
             # 暂停 VM
             qmp.execute("stop")
@@ -322,9 +415,13 @@ class QemuRunner:
             try:
                 qemu_proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
-                qemu_proc.send_signal(signal.SIGTERM)
-                qemu_proc.wait(timeout=3)
-            if os.path.exists(self.qmp_socket):
+                kill_process(qemu_proc)
+            except Exception:
+                try:
+                    kill_process(qemu_proc)
+                except Exception:
+                    pass
+            if not _IS_WINDOWS and os.path.exists(self.qmp_socket):
                 os.remove(self.qmp_socket)
 
         # 验证 dump 文件
@@ -395,8 +492,10 @@ def runner_from_profile(
         except Exception as e:
             print(f"  警告: 无法获取等待符号地址: {e}")
 
+    qemu_binary = find_qemu_binary(qemu_cfg.get('binary', 'qemu-system-arm'))
+    
     return QemuRunner(
-        qemu_binary=qemu_cfg.get('binary', 'qemu-system-arm'),
+        qemu_binary=qemu_binary,
         machine=qemu_cfg['machine'],
         cpu=qemu_cfg.get('cpu', ''),
         kernel_arg=qemu_cfg.get('kernel_arg', '-kernel'),

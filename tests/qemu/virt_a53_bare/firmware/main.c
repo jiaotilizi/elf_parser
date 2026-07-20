@@ -11,4 +11,4 @@
  *   2. char* fields have byte_size == 8 in DWARF
  *   3. parse_struct_auto uses read_uint64 to deref char*, returns str
  */
-#include "../../_common/test_firmware_bss.c"
+#include "../../../_common/test_firmware_bss.c"

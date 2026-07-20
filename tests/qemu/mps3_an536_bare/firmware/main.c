@@ -10,4 +10,4 @@
  * 验证目标：解析器能在 R-profile ARMv7-R Thumb-2 ELF 上工作，
  * 与 M-profile ARMv7-E 输出一致。
  */
-#include "../../_common/test_firmware_bss.c"
+#include "../../../_common/test_firmware_bss.c"

@@ -125,13 +125,14 @@ class ProfileLoader:
                 if filename.endswith(('.yaml', '.yml')):
                     filepath = os.path.join(root, filename)
                     rel_path = os.path.relpath(filepath, self.profiles_dir)
+                    profile_name = rel_path[:-5].replace(os.sep, '/')
                     
                     try:
                         with open(filepath, 'r') as f:
                             content = yaml.safe_load(f)
                             os_name = content.get('os', {}).get('name', 'unknown')
                             profiles.append({
-                                'name': rel_path[:-5],
+                                'name': profile_name,
                                 'path': filepath,
                                 'chip': content.get('chip', {}).get('name', 'unknown'),
                                 'os': os_name,
@@ -139,7 +140,7 @@ class ProfileLoader:
                     except Exception as e:
                         logger.warning(f"Failed to parse profile {filepath}: {e}")
                         profiles.append({
-                            'name': rel_path[:-5],
+                            'name': profile_name,
                             'path': filepath,
                             'chip': 'unknown',
                             'os': 'unknown',

@@ -6,7 +6,7 @@ Uses _common/qemu_runner.py QemuRunner driven by profile YAML.
 import os
 import sys
 
-_TEST_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_TEST_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 if _TEST_DIR not in sys.path:
     sys.path.insert(0, _TEST_DIR)
 

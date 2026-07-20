@@ -6,6 +6,7 @@
 *.dump
 *.a
 *.axf
+*.mem
 
 # Build output directories
 output/img/*

@@ -1,0 +1,34 @@
+chip:
+  name: chip1
+  vendor: unisoc
+  description: Unisoc chip1
+  arch: armv7-r
+  cpu: cortex-r8
+  bits: 32
+memory:
+- name: share_memory
+  start_addr: 0x88000000
+  size: 0x1E400000
+  offset_in_dump: 0
+- name: pscp_iram
+  start_addr: 0x00000000
+  size: 0x00001000
+  offset_in_dump: 0x1E400000
+- name: phycp_iram
+  start_addr: 0x00000000
+  size: 0x00002000
+  offset_in_dump: 0x1E401000
+- name: phycp_llram
+  start_addr: 0x41000000
+  size: 0x00040000
+  offset_in_dump: 0x1E403000
+plugins:
+- rtos.threadx.threadx_v6p5p1
+display:
+  scheme: cli_basic
+  options:
+    show_hex: true
+    show_address: true
+    max_rows: 50
+keyword:
+- _tx_thread_created_ptr

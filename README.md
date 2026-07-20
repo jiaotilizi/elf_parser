@@ -344,6 +344,43 @@ See LICENSE file for details.
 
 ## Changelog
 
+### v0.11.0 - 2026-07-20
+
+**ELF 解析性能优化 + 跨平台工具链配置**
+
+1. **`_build_type_cache` 索引优先 + 懒加载**
+   - 初始化时只建立 DIE 索引（按 offset 和名称），不做任何类型解析
+   - `get_struct_type()` 和 `get_variable_type()` 实现懒加载：首次查询时才解析并缓存
+   - 大 AXF 文件初始化时间从分钟级降至秒级
+   - 新增 `_die_by_offset`、`_type_name_to_offset`、`_var_name_to_offset` 索引结构
+
+2. **跨平台工具链配置** (`tests/_common/toolchain_config.py`)
+   - 统一管理 ARM、AArch64、RISC-V 工具链及 QEMU 路径
+   - 根据操作系统自动识别：Windows 使用 msys64/ucrt64 和 ARM 官方工具链，macOS 使用 /opt/homebrew/bin，Linux 使用 /usr/bin
+   - 支持环境变量覆盖：`ARM_TOOLCHAIN_PATH`、`AARCH64_TOOLCHAIN_PATH`、`RISCV_TOOLCHAIN_PATH`、`QEMU_PATH`
+   - 提供便捷函数：`get_arm_tool()`、`get_aarch64_tool()`、`get_qemu_tool()`
+
+3. **QEMU Runner 跨平台适配** (`tests/_common/qemu_runner.py`)
+   - Windows 使用 TCP QMP 连接（`tcp:localhost:4444`），其他平台使用 Unix Socket
+   - 统一的 QEMU 启动、运行、暂停、内存 dump 流程
+   - 支持等待固件中的同步标志（`wait_symbol`）
+
+4. **Unisoc 目标支持**
+   - 新增 `profiles/unisoc/chip1.yaml` 配置文件
+   - 新增 `tests/unisoc/chip1/` 目录结构（show_parsed.py、show_tasks.py）
+   - `.gitignore` 新增 `*.mem` 规则，防止 mem/axf 文件误提交
+
+5. **测试用例扩展**
+   - `stm32vldiscovery_bare`：编译运行通过（Cortex-M3）
+   - `nxp_imx6ul_threadx`：编译运行通过（Cortex-A7 + ThreadX）
+   - `virt_a53_bare`：编译运行通过（AArch64）
+   - `nxp_imx6ul_bare`：编译运行通过（Cortex-A7）
+   - `mps3_an536_bare`：编译运行通过（Cortex-R52）
+
+**测试结果**：209/221 测试通过（12 个跳过，0 失败），覆盖 ARM Cortex-M/R/A7/A53 架构
+
+---
+
 ### v0.10.0 - 2026-07-20
 
 **开发工具增强：VS Code 调试配置**
