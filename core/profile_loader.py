@@ -22,65 +22,68 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 import os
-import sys
 import yaml
-import importlib
 import logging
-from typing import Dict, List, Optional, Any, Type
+from typing import Dict, List, Any
 
 from .exceptions import ProfileError
 
 logger = logging.getLogger(__name__)
 
 
-class PluginRegistry:
-    @staticmethod
-    def load_plugin(plugin_path: str):
-        import_path = f"plugins.{plugin_path}"
-        
-        try:
-            module = importlib.import_module(import_path)
-        except ImportError:
-            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            if project_root not in sys.path:
-                sys.path.insert(0, project_root)
-            try:
-                module = importlib.import_module(import_path)
-            except ImportError as e:
-                logger.error(f"Failed to import plugin {import_path}: {e}")
-                raise ValueError(f"Failed to import plugin {import_path}: {e}")
-        
-        try:
-            from plugins.base import Plugin
-            for attr_name in dir(module):
-                attr = getattr(module, attr_name)
-                if isinstance(attr, type) and issubclass(attr, Plugin) and attr != Plugin:
-                    if attr.__name__ in ('RTOSPlugin', 'ModulePlugin', 'Plugin'):
-                        continue
-                    return attr()
-            
-            logger.error(f"No plugin class found in {import_path}")
-            raise ValueError(f"No plugin class found in {import_path}")
-        except ImportError as e:
-            logger.error(f"Failed to import plugin {import_path}: {e}")
-            raise ValueError(f"Failed to import plugin {import_path}: {e}")
-        except Exception as e:
-            logger.error(f"Error loading plugin {import_path}: {e}")
-            raise
-
-
 class ProfileLoader:
+    """Profile discovery and management.
+
+    On init, discovers all available profiles and caches their metadata.
+    list_profiles() returns cached data without re-reading files.
+    """
+
     def __init__(self, profiles_dir: str = None):
         if not profiles_dir:
             profiles_dir = os.path.join(os.path.dirname(__file__), '..', 'profiles')
         self.profiles_dir = os.path.abspath(profiles_dir)
-    
+        self._profile_cache: Dict[str, Dict[str, Any]] = {}
+        self._discover()
+
+    def _discover(self):
+        """Discover all profiles and cache their metadata."""
+        self._profile_cache = {}
+
+        for root, dirs, files in os.walk(self.profiles_dir):
+            for filename in files:
+                if filename.endswith(('.yaml', '.yml')):
+                    filepath = os.path.join(root, filename)
+                    rel_path = os.path.relpath(filepath, self.profiles_dir)
+                    profile_name = rel_path[:-5].replace(os.sep, '/')
+
+                    try:
+                        with open(filepath, 'r') as f:
+                            content = yaml.safe_load(f)
+                            self._profile_cache[profile_name] = {
+                                'name': profile_name,
+                                'path': filepath,
+                                'chip': content.get('chip', {}).get('name', 'unknown'),
+                                'arch': content.get('chip', {}).get('arch', 'unknown'),
+                                'vendor': content.get('chip', {}).get('vendor', 'unknown'),
+                                'description': content.get('chip', {}).get('description', ''),
+                            }
+                    except Exception as e:
+                        logger.warning(f"Failed to parse profile {filepath}: {e}")
+                        self._profile_cache[profile_name] = {
+                            'name': profile_name,
+                            'path': filepath,
+                            'chip': 'unknown',
+                            'arch': 'unknown',
+                            'vendor': 'unknown',
+                            'description': '',
+                        }
+
     def load_profile(self, profile_name: str) -> Dict[str, Any]:
         profile_path = os.path.abspath(profile_name)
-        
+
         if not os.path.exists(profile_path):
             raise ProfileError(f"Profile not found: {profile_path}")
-        
+
         try:
             with open(profile_path, 'r') as f:
                 content = yaml.safe_load(f)
@@ -93,37 +96,10 @@ class ProfileLoader:
         except IOError as e:
             logger.error(f"Cannot read profile {profile_path}: {e}")
             raise ProfileError(f"Cannot read profile {profile_path}: {e}")
-    
+
     def list_profiles(self) -> List[Dict[str, Any]]:
-        profiles = []
-        
-        for root, dirs, files in os.walk(self.profiles_dir):
-            for filename in files:
-                if filename.endswith(('.yaml', '.yml')):
-                    filepath = os.path.join(root, filename)
-                    rel_path = os.path.relpath(filepath, self.profiles_dir)
-                    profile_name = rel_path[:-5].replace(os.sep, '/')
-                    
-                    try:
-                        with open(filepath, 'r') as f:
-                            content = yaml.safe_load(f)
-                            os_name = content.get('os', {}).get('name', 'unknown')
-                            profiles.append({
-                                'name': profile_name,
-                                'path': filepath,
-                                'chip': content.get('chip', {}).get('name', 'unknown'),
-                                'os': os_name,
-                            })
-                    except Exception as e:
-                        logger.warning(f"Failed to parse profile {filepath}: {e}")
-                        profiles.append({
-                            'name': profile_name,
-                            'path': filepath,
-                            'chip': 'unknown',
-                            'os': 'unknown',
-                        })
-        
-        return profiles
+        """Return cached profile metadata (no re-reading of files)."""
+        return list(self._profile_cache.values())
     
     def get_memory_regions(self, profile: Dict[str, Any]) -> List[Dict[str, Any]]:
         memory_config = profile.get('memory', [])
@@ -152,6 +128,15 @@ class ProfileLoader:
             'options': display_config.get('options', {})
         }
     
+    def get_parser_config(self, profile: Dict[str, Any]) -> Dict[str, Any]:
+        parser_config = profile.get('parser', 'elftools')
+        if isinstance(parser_config, str):
+            return {'type': parser_config, 'options': {}}
+        return {
+            'type': parser_config.get('type', 'elftools'),
+            'options': parser_config.get('options', {})
+        }
+    
     def validate_profile(self, profile: Dict[str, Any]) -> List[str]:
         errors = []
         
@@ -163,16 +148,4 @@ class ProfileLoader:
         
         return errors
     
-    def load_plugins_from_profile(self, profile: Dict[str, Any]) -> List[Any]:
-        plugins = []
-        
-        plugins_config = profile.get('plugins', [])
-        for plugin_path in plugins_config:
-            try:
-                plugin = PluginRegistry.load_plugin(plugin_path)
-                plugins.append(plugin)
-                logger.debug(f"Loaded plugin: {plugin_path} -> {plugin.name}")
-            except Exception as e:
-                logger.warning(f"Failed to load plugin {plugin_path}: {e}")
-        
-        return plugins
+    

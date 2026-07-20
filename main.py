@@ -30,14 +30,16 @@ sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
 
 try:
-    from core.elf_parser import ELFParser
+    from core.elf_parser import ELFParserFactory
     from core.dump_reader import DumpReader
     from core.profile_loader import ProfileLoader
+    from core.plugin_registry import PluginRegistry
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from core.elf_parser import ELFParser
+    from core.elf_parser import ELFParserFactory
     from core.dump_reader import DumpReader
     from core.profile_loader import ProfileLoader
+    from core.plugin_registry import PluginRegistry
 
 from display import DisplayFactory
 from display.data_adapter import DataAdapter
@@ -108,8 +110,10 @@ def analyze(elf_path: str, dump_path: str, profile_name: str) -> dict:
     if validation_errors:
         raise ValueError(f"Profile validation failed: {'; '.join(validation_errors)}")
     
-    print(f"Loading ELF: {elf_path}")
-    elf_parser = ELFParser(elf_path)
+    parser_config = profile_loader.get_parser_config(profile)
+    parser_type = parser_config.get('type', 'elftools')
+    print(f"Loading ELF: {elf_path} (parser: {parser_type})")
+    elf_parser = ELFParserFactory.create(elf_path, parser_type)
     
     print(f"Loading dump: {dump_path}")
     memory_regions = profile_loader.get_memory_regions(profile)
@@ -130,7 +134,8 @@ def analyze(elf_path: str, dump_path: str, profile_name: str) -> dict:
             raise ValueError(f"Profile/ELF/Dump mismatch: {len(all_unmatched)} keywords not found in either ELF or dump")
     
     print(f"Loading plugins from profile...")
-    plugins = profile_loader.load_plugins_from_profile(profile)
+    plugin_registry = PluginRegistry()
+    plugins = plugin_registry.get_plugins_for_profile(profile)
     
     context = {
         'elf_parser': elf_parser,
@@ -201,43 +206,12 @@ def list_profiles():
 
 
 def list_plugins():
-    from plugins.base import Plugin
-    import importlib
-    import os
-    
-    plugin_dirs = ['rtos', 'module']
-    plugins = []
-    
-    for plugin_dir in plugin_dirs:
-        full_dir = os.path.join(os.path.dirname(__file__), 'plugins', plugin_dir)
-        if not os.path.exists(full_dir):
-            continue
-        
-        for subdir in os.listdir(full_dir):
-            subdir_path = os.path.join(full_dir, subdir)
-            if not os.path.isdir(subdir_path):
-                continue
-            
-            for filename in os.listdir(subdir_path):
-                if filename.endswith('.py') and not filename.startswith('_'):
-                    module_path = f"plugins.{plugin_dir}.{subdir}.{filename[:-3]}"
-                    try:
-                        module = importlib.import_module(module_path)
-                        for attr_name in dir(module):
-                            attr = getattr(module, attr_name)
-                            if isinstance(attr, type) and issubclass(attr, Plugin) and attr != Plugin:
-                                if attr.__name__ in ('RTOSPlugin', 'ModulePlugin', 'Plugin'):
-                                    continue
-                                plugins.append({
-                                    'path': module_path.replace('plugins.', ''),
-                                    'name': attr_name,
-                                })
-                    except Exception:
-                        pass
+    registry = PluginRegistry()
+    plugins = registry.list_plugins()
     
     print("Available plugins:")
     for p in plugins:
-        print(f"  - {p['path']}")
+        print(f"  - {p['path']} ({p.get('type', 'unknown')})")
 
 
 def dump_struct(elf_parser, dump_reader, struct_name: str):

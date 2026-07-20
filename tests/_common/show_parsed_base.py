@@ -34,7 +34,7 @@ _ELF_PARSER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspat
 if _ELF_PARSER_DIR not in sys.path:
     sys.path.insert(0, _ELF_PARSER_DIR)
 
-from core.elf_parser import ELFParser
+from core.elf_parser import ELFParserFactory, ELFParser
 from core.dump_reader import DumpReader
 from core.profile_loader import ProfileLoader
 
@@ -71,9 +71,11 @@ class ShowParsedBase:
 
     # ── 初始化 ──────────────────────────────────────────────
     def _init_parsers(self):
-        self.elf_parser = ELFParser(self.elf_path)
         loader = ProfileLoader()
         profile = loader.load_profile(self.profile_name)
+        parser_config = loader.get_parser_config(profile)
+        parser_type = parser_config.get('type', 'pyelftools')
+        self.elf_parser = ELFParserFactory.create(self.elf_path, parser_type)
         regions = loader.get_memory_regions(profile)
         self.dump_reader = DumpReader(self.dump_path, regions)
 

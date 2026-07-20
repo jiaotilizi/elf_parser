@@ -21,35 +21,12 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
-
-"""Core module for ELF/Dump parsing and profile management."""
-
-from .elf_parser import ELFParser, ELFParserFactory
-from .dump_reader import DumpReader, MemoryRegion
-from .profile_loader import ProfileLoader
-from .plugin_registry import PluginRegistry
-from .context import PluginContext
-from .exceptions import (
-    ELFParserError,
-    ProfileError,
-    PluginError,
-    DWARFError,
-    MemoryReadError,
-    ResourceNotFoundError,
-)
+from .base import ELFParser, ELFParserFactory
+from .elftools_parser import ElftoolsParser
+from .dwarffi_parser import DwarffiParser
+from .gimli_parser import GimliParser
 
 __all__ = [
     'ELFParser',
     'ELFParserFactory',
-    'DumpReader',
-    'MemoryRegion',
-    'ProfileLoader',
-    'PluginRegistry',
-    'PluginContext',
-    'ELFParserError',
-    'ProfileError',
-    'PluginError',
-    'DWARFError',
-    'MemoryReadError',
-    'ResourceNotFoundError',
 ]

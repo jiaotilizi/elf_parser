@@ -7,7 +7,8 @@ import struct
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from core.dump_reader import DumpReader, MemoryRegion
-from core.profile_loader import ProfileLoader, PluginRegistry
+from core.profile_loader import ProfileLoader
+from core.plugin_registry import PluginRegistry
 from plugins.rtos.base import RTOSPlugin
 from plugins.module.base import ModulePlugin
 
@@ -74,21 +75,31 @@ class TestDumpReader(unittest.TestCase):
 
 
 class TestPluginRegistry(unittest.TestCase):
+    def setUp(self):
+        self.registry = PluginRegistry()
+
     def test_load_os_plugin(self):
-        plugin = PluginRegistry.load_plugin('rtos.threadx.threadx_v6p5p1')
+        plugin = self.registry.load_plugin('rtos.threadx.threadx_v6p5p1')
         self.assertIsNotNone(plugin)
         self.assertEqual(plugin.name, 'threadx_v6p5p1')
         self.assertIsInstance(plugin, RTOSPlugin)
 
     def test_load_module_plugin(self):
-        plugin = PluginRegistry.load_plugin('module.assert_info.assert_info_v0')
+        plugin = self.registry.load_plugin('module.assert_info.assert_info_v0')
         self.assertIsNotNone(plugin)
         self.assertEqual(plugin.name, 'assert_info')
         self.assertIsInstance(plugin, ModulePlugin)
 
     def test_load_nonexistent_plugin(self):
         with self.assertRaises(ValueError):
-            PluginRegistry.load_plugin('rtos.nonexistent.plugin')
+            self.registry.load_plugin('rtos.nonexistent.plugin')
+
+    def test_list_plugins(self):
+        plugins = self.registry.list_plugins()
+        self.assertGreater(len(plugins), 0)
+        plugin_paths = [p['path'] for p in plugins]
+        self.assertIn('rtos.threadx.threadx_v6p5p1', plugin_paths)
+        self.assertIn('module.assert_info.assert_info_v0', plugin_paths)
 
 
 class TestProfileLoader(unittest.TestCase):
@@ -144,7 +155,8 @@ class TestProfileLoader(unittest.TestCase):
         loader = ProfileLoader()
         profile = loader.load_profile('profiles/qemu/mps2_an386_threadx.yaml')
 
-        plugins = loader.load_plugins_from_profile(profile)
+        registry = PluginRegistry()
+        plugins = registry.get_plugins_for_profile(profile)
         self.assertTrue(len(plugins) > 0)
         
         plugin_names = [p.name for p in plugins]

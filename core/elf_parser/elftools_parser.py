@@ -34,10 +34,12 @@ from elftools.dwarf.dwarfinfo import DWARFInfo
 from elftools.dwarf.compileunit import CompileUnit
 from elftools.dwarf.die import DIE
 
+from .base import ELFParser
+
 logger = logging.getLogger(__name__)
 
 
-class ELFParser:
+class ElftoolsParser(ELFParser):
     def __init__(self, elf_path: str):
         self.elf_path = elf_path
         self.elffile = None
@@ -796,6 +798,10 @@ class ELFParser:
         Returns:
             类型信息字典，如果变量不在 DWARF 中则返回 None
         """
+        return self.get_var_type(name)
+
+    def get_var_type(self, name: str) -> Optional[Dict[str, Any]]:
+        """获取全局变量的 DWARF 类型信息（懒加载：首次查询时按需解析）。"""
         if name in self._var_type_cache:
             return self._var_type_cache[name]
 
@@ -834,6 +840,10 @@ class ELFParser:
                 return self._search_function_in_cu(address, cu)
         
         return None
+    
+    def get_function_by_address(self, address: int) -> Optional[Dict[str, Any]]:
+        """Get function info containing the given address."""
+        return self.find_function_by_address(address)
     
     def _search_function_in_cu(self, address: int, cu: CompileUnit) -> Optional[Dict[str, Any]]:
         for die in cu.iter_DIEs():
@@ -971,3 +981,7 @@ class ELFParser:
                 unmatched.append(keyword)
         
         return unmatched
+
+
+from .base import ELFParserFactory
+ELFParserFactory.register('elftools', ElftoolsParser)

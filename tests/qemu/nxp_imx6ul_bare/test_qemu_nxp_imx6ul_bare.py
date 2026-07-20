@@ -1,7 +1,7 @@
 import os
 import unittest
 
-from core.elf_parser import ELFParser
+from core.elf_parser import ELFParserFactory
 from core.dump_reader import DumpReader
 from core.profile_loader import ProfileLoader
 
@@ -18,7 +18,7 @@ class TestQEMUNxpImx6ulFirmwareAutoParse(unittest.TestCase):
         if not os.path.exists(self.ELF_PATH) or not os.path.exists(self.DUMP_PATH):
             self.skipTest("NXP i.MX6UL firmware ELF/dump files not found")
 
-        self.elf_parser = ELFParser(self.ELF_PATH)
+        self.elf_parser = ELFParserFactory.create(self.ELF_PATH, 'elftools')
         profile_loader = ProfileLoader()
         profile = profile_loader.load_profile('profiles/qemu/nxp_imx6ul_bare.yaml')
         regions = profile_loader.get_memory_regions(profile)

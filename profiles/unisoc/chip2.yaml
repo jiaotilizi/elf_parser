@@ -1,7 +1,7 @@
 chip:
-  name: chip1
+  name: chip2
   vendor: unisoc
-  description: Unisoc chip1
+  description: Unisoc chip2 (dwarffi parser)
   arch: armv7-r
   cpu: cortex-r8
   bits: 32

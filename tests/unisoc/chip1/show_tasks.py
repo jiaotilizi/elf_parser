@@ -1,11 +1,11 @@
 import os
 import sys
 
-_ELF_PARSER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_ELF_PARSER_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 if _ELF_PARSER_DIR not in sys.path:
     sys.path.insert(0, _ELF_PARSER_DIR)
 
-from core.elf_parser import ELFParser
+from core.elf_parser import ELFParserFactory
 from core.dump_reader import DumpReader
 from core.profile_loader import ProfileLoader
 
@@ -16,7 +16,7 @@ SCENARIO_DIR = os.path.dirname(os.path.abspath(__file__))
 def main():
     elf_path = os.path.join(SCENARIO_DIR, 'output', 'QogirS6_PS_modem.axf')
     dump_path = os.path.join(SCENARIO_DIR, 'output', '2026_07_03_14_19_35_658_1.mem')
-    profile_name = 'profiles/unisoc/chip1.yaml'
+    profile_name = os.path.join(_ELF_PARSER_DIR, 'profiles', 'unisoc', 'chip1.yaml')
 
     print(f"ELF  : {elf_path}")
     print(f"Dump : {dump_path}")
@@ -24,22 +24,24 @@ def main():
     print()
 
     if not os.path.exists(elf_path):
-        print(f"✗ ELF 不存在: {elf_path}")
+        print(f"[X] ELF 不存在: {elf_path}")
         return 1
     if not os.path.exists(dump_path):
-        print(f"✗ Dump 不存在: {dump_path}")
+        print(f"[X] Dump 不存在: {dump_path}")
         return 1
 
     loader = ProfileLoader()
     profile = loader.load_profile(profile_name)
     if not profile:
-        print(f"✗ 无法加载 profile: {profile_name}")
+        print(f"[X] 无法加载 profile: {profile_name}")
         return 1
 
+    parser_config = loader.get_parser_config(profile)
+    parser_type = parser_config.get('type', 'pyelftools')
     regions = loader.get_memory_regions(profile)
 
     print("Loading ELF...")
-    elf_parser = ELFParser(elf_path)
+    elf_parser = ELFParserFactory.create(elf_path, parser_type)
 
     print("Loading Dump...")
     dump_reader = DumpReader(dump_path, regions)
@@ -97,7 +99,7 @@ def main():
         
         print("Initializing plugin...")
         if plugin.initialize(context):
-            print("  ✓ Plugin initialized")
+            print("  [OK] Plugin initialized")
             
             print("\nExecuting plugin...")
             result = plugin.execute(context)
@@ -119,14 +121,14 @@ def main():
                     print(f"{name:<30} {priority:>8} {state:<12} {stack_size:>10} 0x{address:08x}")
             
             else:
-                print("  ✗ Plugin execute returned None")
+                print("  [X] Plugin execute returned None")
         else:
-            print("  ✗ Plugin initialize failed")
+            print("  [X] Plugin initialize failed")
             
     except ImportError as e:
-        print(f"  ✗ Failed to import plugin: {e}")
+        print(f"  [X] Failed to import plugin: {e}")
     except Exception as e:
-        print(f"  ✗ Plugin error: {e}")
+        print(f"  [X] Plugin error: {e}")
         import traceback
         traceback.print_exc()
 

@@ -19,7 +19,7 @@ import contextlib
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from core.elf_parser import ELFParser
+from core.elf_parser import ELFParserFactory
 from core.dump_reader import DumpReader
 from core.profile_loader import ProfileLoader
 
@@ -38,7 +38,7 @@ class TestELFParserPublicAPI(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.parser = ELFParser(ELF_PATH)
+        cls.parser = ELFParserFactory.create(ELF_PATH, 'elftools')
         # 加载 dump data 用于 read_memory_from_dump / parse_struct_from_dump
         with open(DUMP_PATH, 'rb') as f:
             cls.dump_data = f.read()

@@ -4,7 +4,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from core.elf_parser import ELFParser
+from core.elf_parser import ELFParserFactory
 from core.dump_reader import DumpReader
 from core.profile_loader import ProfileLoader
 
@@ -23,7 +23,7 @@ class TestQEMUMps3An536ThreadXFirmwareAutoParse(unittest.TestCase):
         profile = loader.load_profile('profiles/qemu/mps3_an536_threadx.yaml')
         regions = loader.get_memory_regions(profile)
 
-        cls.elf_parser = ELFParser(cls.elf_path)
+        cls.elf_parser = ELFParserFactory.create(cls.elf_path, 'elftools')
         cls.dump_reader = DumpReader(cls.dump_path, regions)
         cls.keywords = profile.get('keyword', [])
 

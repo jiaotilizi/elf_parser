@@ -483,8 +483,8 @@ def runner_from_profile(
     wait_symbol_addr = None
     if wait_symbol:
         try:
-            from core.elf_parser import ELFParser
-            elf_parser = ELFParser(elf_path)
+            from core.elf_parser import ELFParserFactory
+            elf_parser = ELFParserFactory.create(elf_path, 'elftools')
             sym = elf_parser.get_symbol_by_name(wait_symbol)
             if sym:
                 wait_symbol_addr = sym['address']

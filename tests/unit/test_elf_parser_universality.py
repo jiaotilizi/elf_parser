@@ -19,7 +19,8 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from core.elf_parser import ELFParser
+from core.elf_parser import ELFParserFactory
+from core.elf_parser.elftools_parser import ElftoolsParser
 from core.dump_reader import DumpReader
 
 
@@ -28,7 +29,7 @@ class TestELFParserUniversality(unittest.TestCase):
 
     def setUp(self):
         # 跳过 __init__ 的 ELF 解析，直接造一个空壳实例
-        self.parser = ELFParser.__new__(ELFParser)
+        self.parser = ElftoolsParser.__new__(ElftoolsParser)
         # 默认按 32 位假设（多数现存场景），64 位用例会显式覆盖
         self.parser._address_size = 4
 

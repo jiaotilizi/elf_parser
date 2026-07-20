@@ -47,6 +47,9 @@ htmlcov/
 .AppleDouble
 .LSOverride
 
+# ISF cache
+.elf_cache/
+
 # Windows
 Thumbs.db
 ehthumbs.db

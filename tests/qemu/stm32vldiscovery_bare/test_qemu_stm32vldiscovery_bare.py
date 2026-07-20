@@ -4,7 +4,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from core.elf_parser import ELFParser
+from core.elf_parser import ELFParserFactory
 from core.dump_reader import DumpReader
 from core.profile_loader import ProfileLoader
 
@@ -21,7 +21,7 @@ class TestQEMUStm32vldiscoveryFirmwareAutoParse(unittest.TestCase):
         if not os.path.exists(self.ELF_PATH) or not os.path.exists(self.DUMP_PATH):
             self.skipTest("STM32 firmware ELF/dump files not found")
 
-        self.elf_parser = ELFParser(self.ELF_PATH)
+        self.elf_parser = ELFParserFactory.create(self.ELF_PATH, 'elftools')
         profile_loader = ProfileLoader()
         profile = profile_loader.load_profile('profiles/qemu/stm32vldiscovery_bare.yaml')
         regions = profile_loader.get_memory_regions(profile)
