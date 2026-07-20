@@ -344,6 +344,23 @@ See LICENSE file for details.
 
 ## Changelog
 
+### v0.10.0 - 2026-07-20
+
+**开发工具增强：VS Code 调试配置**
+
+1. **新增 .vscode/launch.json**
+   - 12 个调试配置覆盖所有场景：5 个 RTOS 场景调试入口（mps2_an386_freertos/mps2_an386_threadx/mps3_an536_freertos/mps3_an536_threadx/nxp_imx6ul_threadx）、List Profiles/List Plugins 工具命令、4 组 pytest 测试配置（All RTOS Tests/FreeRTOS Tests/ThreadX Tests/Unit Tests）、通用 Python 文件调试入口
+   - 所有配置使用 `${workspaceFolder}` 变量，支持任意工作区路径
+   - `justMyCode: false` 允许调试第三方库代码
+
+2. **新增 .vscode/settings.json**
+   - `python.analysis.extraPaths`: 添加项目根目录，解决 VS Code Python 分析器无法识别核心模块（core/plugins/display）的问题
+   - `python.testing.pytestEnabled: true`: 启用 pytest 测试框架，支持 VS Code 测试探索功能
+
+3. **移除 .gitignore 中对 .vscode 的忽略**，便于团队共享调试配置
+
+---
+
 ### v0.9.9 - 2026-07-20
 
 **测试增强：RTOS 数据准确性验证**
