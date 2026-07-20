@@ -148,22 +148,61 @@ Help
 
 **设计要点**：
 
-1. **下拉列表**：展示所有可用的 Device Profile
-2. **搜索框**：支持按名称/芯片/OS 过滤
-3. **预览区**：选中后显示 Profile 详细信息（芯片、OS、内存区域）
-4. **加载按钮**：确认后加载对应插件，更新菜单栏
+1. **芯片选择**：从所有 profiles 中提取唯一芯片型号，以树形或两级下拉展示
+2. **OS/Profile 选择**：选中芯片后，展示该芯片支持的所有 OS/Profile（如 MPS2 AN386 支持 FreeRTOS/ThreadX/Bare-metal）
+3. **搜索框**：支持按芯片名称/型号/OS 过滤
+4. **预览区**：选中后显示 Profile 详细信息（芯片、OS、内存区域、插件列表）
+5. **加载按钮**：确认后加载对应插件，更新菜单栏
 
-**数据结构**：
+**数据结构**（基于 profile.yaml 实际结构）：
 
 ```python
-class DeviceProfile:
-    name: str              # 显示名称 (e.g., "MPS2 AN386 + FreeRTOS v11.3.0")
-    chip: str              # 芯片型号
-    os_name: str           # OS 名称
-    os_version: str        # OS 版本
-    plugins: List[str]     # 关联的插件列表
+class ChipInfo:
+    name: str              # 芯片名称 (e.g., "MPS2 AN386")
+    vendor: str            # 芯片厂商 (e.g., "arm")
+    cpu: str               # CPU 型号 (e.g., "cortex-m4")
+    arch: str              # 架构 (e.g., "armv7e-m")
+    bits: int              # 位宽 (32/64)
+    profiles: List[ProfileInfo]  # 该芯片支持的所有 Profile
+
+class ProfileInfo:
+    name: str              # Profile 名称 (e.g., "qemu_mps2_an386_freertos")
+    description: str       # 描述 (e.g., "QEMU ARM MPS2 AN386 (Cortex-M4) + FreeRTOS V11.3.0")
+    plugins: List[str]     # 插件列表 (e.g., ["rtos.freertos.freertos_v11p3p0", "module.assert_info.assert_info_v0"])
     memory_regions: List[Dict]  # 内存区域配置
 ```
+
+**Profile 文件结构示例**（参考 profiles/qemu/mps2_an386_freertos.yaml）：
+
+```yaml
+chip:
+  name: qemu_mps2_an386_freertos
+  vendor: arm
+  description: QEMU ARM MPS2 AN386 (Cortex-M4) + FreeRTOS V11.3.0
+  arch: armv7e-m
+  cpu: cortex-m4
+  bits: 32
+memory:
+- name: ram
+  start_addr: 536870912
+  size: 65536
+plugins:
+- rtos.freertos.freertos_v11p3p0    # RTOS 插件
+- module.assert_info.assert_info_v0  # Module 插件
+- module.test_point.test_point_v0    # Module 插件
+```
+
+**芯片与 Profile 映射关系**：
+
+| 芯片型号 | 支持的 OS/Profile | 插件 |
+|---------|-------------------|------|
+| MPS2 AN386 | FreeRTOS v11.3.0 | rtos.freertos.freertos_v11p3p0 |
+| MPS2 AN386 | ThreadX v6.5.1 | rtos.threadx.threadx_v6p5p1 |
+| MPS2 AN386 | Bare-metal | 无 |
+| MPS3 AN536 | FreeRTOS v11.3.0 | rtos.freertos.freertos_v11p3p0 |
+| MPS3 AN536 | ThreadX v6.5.1 | rtos.threadx.threadx_v6p5p1 |
+| NXP i.MX6UL | ThreadX v6.5.1 | rtos.threadx.threadx_v6p5p1 |
+| STM32VLDiscovery | Bare-metal | 无 |
 
 **交互流程**：
 
@@ -172,18 +211,34 @@ class DeviceProfile:
         ↓
 弹出 DeviceSelectorDialog
         ↓
-用户从下拉列表选择 Device
+用户从芯片列表选择芯片（如 "MPS2 AN386"）
         ↓
-预览区显示 Profile 详细信息
+右侧显示该芯片支持的 OS/Profile 列表
+        ↓
+用户选择具体 Profile（如 "FreeRTOS v11.3.0"）
+        ↓
+预览区显示完整 Profile 信息（芯片、OS、内存、插件）
         ↓
 用户点击 "Load" 按钮
         ↓
-系统加载对应插件到 PluginContext
+系统解析 Profile 的 plugins 字段，区分 RTOS 和 Module 插件
         ↓
-更新 RTOS 和 Module 菜单
+加载插件到 PluginContext（rtos.* → RTOS 插件，module.* → Module 插件）
         ↓
-刷新 Navigation Pane
+更新 RTOS 菜单（根据 RTOS 插件支持的资源类型）
+        ↓
+更新 Module 菜单（根据 Module 插件列表）
+        ↓
+刷新 Navigation Pane（显示可用资源类型）
 ```
+
+**插件分类规则**：
+
+| 插件路径前缀 | 类型 | 菜单位置 |
+|-------------|------|---------|
+| `rtos.freertos.*` | RTOS 插件 | RTOS 菜单 |
+| `rtos.threadx.*` | RTOS 插件 | RTOS 菜单 |
+| `module.*` | Module 插件 | Module 菜单 |
 
 ## 4. 命令行系统设计
 
