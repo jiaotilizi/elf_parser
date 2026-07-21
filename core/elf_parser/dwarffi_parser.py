@@ -21,8 +21,10 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
+import bisect
 import logging
 import os
+import re
 import struct
 import mmap
 import hashlib
@@ -30,6 +32,7 @@ import zlib
 from typing import Dict, List, Optional, Any, Tuple, Sequence, Iterator
 
 from .base import ELFParser
+from .struct_accessor import ViewNode, StructAccessor
 
 logger = logging.getLogger(__name__)
 
@@ -246,6 +249,9 @@ class DwarffiParser(ELFParser):
         self._dffi = None
         self._mmap = None
 
+        self._segment_cache: List[Dict[str, Any]] = []
+        self._sorted_segment_ranges: List[Tuple[int, int, Dict[str, Any]]] = []
+
         self._types_index: Dict[str, Tuple[int, int]] = {}
         self._symbols_index: Dict[str, Tuple[int, int]] = {}
         self._types_data_offset = 0
@@ -253,6 +259,7 @@ class DwarffiParser(ELFParser):
         self._string_pool: Optional[StringPool] = None
 
         self._load_or_generate_isf()
+        self._parse_elf_segments_and_symbols()
 
     def __del__(self):
         if self._mmap is not None:
@@ -819,9 +826,6 @@ class DwarffiParser(ELFParser):
             'members': members,
         }
 
-    def get_var_type(self, var_name: str) -> Optional[Dict[str, Any]]:
-        return None
-
     def parse_struct_from_dump(self, struct_name: str, address: int,
                                 dump_data: bytes) -> Optional[Dict[str, Any]]:
         struct_type = self.get_struct_type(struct_name)
@@ -859,13 +863,6 @@ class DwarffiParser(ELFParser):
 
         return result
 
-    def read_memory_from_dump(self, address: int, size: int,
-                               dump_data: bytes) -> Optional[bytes]:
-        return None
-
-    def read_memory_from_elf(self, address: int, size: int) -> Optional[bytes]:
-        return None
-
     def match_keywords(self, keywords: List[str],
                         check_elf_only: bool = False) -> List[str]:
         unmatched = []
@@ -875,18 +872,6 @@ class DwarffiParser(ELFParser):
             if keyword.lower() not in elf_text:
                 unmatched.append(keyword)
         return unmatched
-
-    def find_symbols_by_pattern(self, pattern: str) -> List[Dict[str, Any]]:
-        return []
-
-    def get_function_by_address(self, address: int) -> Optional[Dict[str, Any]]:
-        return None
-
-    def find_function_by_address(self, address: int) -> Optional[Dict[str, Any]]:
-        return self.get_function_by_address(address)
-
-    def parse_struct_auto(self, var_name: str, dump_reader) -> Optional[Any]:
-        return None
 
     def get_all_symbols(self) -> List[Dict[str, Any]]:
         if self._symbol_cache:
@@ -901,6 +886,402 @@ class DwarffiParser(ELFParser):
             return result
 
         return []
+
+    # ------------------------------------------------------------------
+    # ELF segments and symbols (lightweight, no DWARF)
+    # ------------------------------------------------------------------
+
+    def _parse_elf_segments_and_symbols(self):
+        """Parse ELF segments and symbols using elftools (fast, no DWARF)."""
+        try:
+            from elftools.elf.elffile import ELFFile
+
+            with open(self.elf_path, 'rb') as f:
+                elffile = ELFFile(f)
+
+                self._elf_header_info.update({
+                    'class': elffile.elfclass,
+                    'machine': elffile.get_machine_arch(),
+                    'entry': elffile.header['e_entry'],
+                    'num_sections': elffile.num_sections(),
+                    'num_segments': elffile.num_segments(),
+                })
+
+                for seg in elffile.iter_segments():
+                    if seg['p_type'] == 'PT_LOAD':
+                        self._segment_cache.append({
+                            'vaddr': seg['p_vaddr'],
+                            'filesz': seg['p_filesz'],
+                            'memsz': seg['p_memsz'],
+                            'data': seg.data(),
+                        })
+
+                self._sorted_segment_ranges = sorted(
+                    [(s['vaddr'], s['vaddr'] + s['memsz'], s) for s in self._segment_cache],
+                    key=lambda x: x[0]
+                )
+
+                # Parse ELF symbols (from .symtab)
+                symtab = elffile.get_section_by_name('.symtab')
+                if symtab:
+                    for sym in symtab.iter_symbols():
+                        name = sym.name
+                        if name and sym['st_info']['type'] == 'STT_OBJECT':
+                            kind = 'global_object'
+                        elif name and sym['st_info']['type'] == 'STT_FUNC':
+                            kind = 'function'
+                        elif name and sym['st_info']['type'] == 'STT_NOTYPE':
+                            kind = 'maybe'
+                        else:
+                            continue
+
+                        if name not in self._symbol_cache:
+                            self._symbol_cache[name] = {
+                                'name': name,
+                                'address': sym['st_value'],
+                                'size': sym['st_size'],
+                                'type': kind,
+                            }
+
+            logger.debug(f"Parsed ELF segments: {len(self._segment_cache)} "
+                         f"PT_LOAD segments, {len(self._symbol_cache)} symbols")
+
+        except Exception as e:
+            logger.warning(f"Failed to parse ELF segments/symbols: {e}")
+
+    def _find_segment_for_address(self, address: int, size: int = 0) -> Optional[Dict[str, Any]]:
+        if not self._sorted_segment_ranges:
+            return None
+        low_addrs = [r[0] for r in self._sorted_segment_ranges]
+        idx = bisect.bisect_right(low_addrs, address) - 1
+        if idx >= 0:
+            start, end, seg = self._sorted_segment_ranges[idx]
+            if start <= address < end:
+                return seg
+        return None
+
+    def read_memory_from_dump(self, address: int, size: int, dump_data: bytes) -> Optional[bytes]:
+        seg = self._find_segment_for_address(address, size)
+        if seg:
+            dump_offset = address - seg['vaddr']
+            if dump_offset + size <= len(dump_data):
+                return dump_data[dump_offset:dump_offset + size]
+        return None
+
+    def read_memory_from_elf(self, address: int, size: int) -> Optional[bytes]:
+        seg = self._find_segment_for_address(address, size)
+        if seg:
+            file_offset = address - seg['vaddr']
+            actual_size = min(size, seg['filesz'] - file_offset)
+            if actual_size > 0:
+                return seg['data'][file_offset:file_offset + actual_size]
+        return None
+
+    # ------------------------------------------------------------------
+    # StructAccessor API
+    # ------------------------------------------------------------------
+
+    def read_struct_as_node(self, struct_type: Dict[str, Any], address: int,
+                            dump_reader) -> Optional[ViewNode]:
+        """Read a struct from dump memory and return a ViewNode tree."""
+        if not dump_reader or not struct_type:
+            return None
+
+        byte_size = struct_type.get('byte_size', 0)
+        if byte_size <= 0:
+            return None
+
+        struct_name = struct_type.get('name', '')
+
+        # Read raw struct data from dump
+        try:
+            raw_data = dump_reader.read_memory(address, byte_size)
+            if raw_data is None or len(raw_data) < byte_size:
+                return None
+        except Exception:
+            return None
+
+        is_32bit = self._is_32bit
+        addr_size = self._address_size
+
+        children = []
+        members = struct_type.get('members', [])
+        for member in members:
+            m_name = member.get('name', '')
+            m_offset = member.get('offset', 0)
+            m_size = member.get('byte_size', 0)
+            m_type_name = member.get('type_name', '')
+
+            if m_offset + m_size > byte_size:
+                continue
+
+            member_data = raw_data[m_offset:m_offset + m_size]
+            child = self._decode_member(m_name, m_type_name, m_size, member_data,
+                                        address + m_offset, is_32bit, addr_size, dump_reader)
+            children.append(child)
+
+        return ViewNode(
+            name=struct_name,
+            type_name=struct_name,
+            kind='struct',
+            address=address,
+            byte_size=byte_size,
+            children=children,
+            expandable=True,
+        )
+
+    def _decode_member(self, name: str, type_name: str, byte_size: int,
+                       data: bytes, address: int, is_32bit: bool, addr_size: int,
+                       dump_reader) -> ViewNode:
+        """Decode a single struct member into a ViewNode."""
+        # Determine type kind from type_name
+        kind = self._infer_type_kind(type_name, byte_size, addr_size)
+
+        if kind == 'ptr_struct' or kind == 'ptr_string' or kind == 'ptr_func' or kind == 'ptr_scalar':
+            raw_value = self._unpack_int(data, byte_size, is_32bit)
+            target_type = self._resolve_ptr_target_type(type_name)
+            display_value = f"0x{raw_value:X}" if raw_value else "NULL"
+            meta = {'is_null': raw_value == 0}
+            if target_type:
+                meta['target_type'] = target_type
+            return ViewNode(
+                name=name, type_name=type_name, kind=kind,
+                raw_value=raw_value, display_value=display_value,
+                address=address, byte_size=byte_size, meta=meta,
+            )
+
+        elif kind == 'struct':
+            # Nested struct
+            nested_type = self.get_struct_type(type_name)
+            if nested_type and dump_reader:
+                nested = self.read_struct_as_node(nested_type, address, dump_reader)
+                if nested:
+                    nested.name = name
+                    return nested
+            # Fallback: treat as bytes
+            raw_value = self._unpack_int(data, min(byte_size, 8), is_32bit)
+            return ViewNode(
+                name=name, type_name=type_name, kind='scalar',
+                raw_value=raw_value, display_value=f"0x{raw_value:X}",
+                address=address, byte_size=byte_size,
+            )
+
+        elif kind == 'string':
+            # Fixed char array
+            try:
+                s = data.split(b'\x00')[0].decode('utf-8', errors='replace')
+            except Exception:
+                s = ''
+            return ViewNode(
+                name=name, type_name=type_name, kind='string',
+                display_value=s, address=address, byte_size=byte_size,
+            )
+
+        elif kind == 'enum':
+            raw_value = self._unpack_int(data, min(byte_size, 4), is_32bit)
+            return ViewNode(
+                name=name, type_name=type_name, kind='enum',
+                raw_value=raw_value, display_value=f"{type_name}({raw_value})",
+                address=address, byte_size=byte_size,
+            )
+
+        else:
+            # Scalar
+            raw_value = self._unpack_int(data, min(byte_size, 8), is_32bit)
+            is_signed = 'int' in type_name.lower() and 'unsigned' not in type_name.lower()
+            if is_signed and byte_size <= 4:
+                if byte_size == 1:
+                    raw_value = struct.unpack('<b', data[:1])[0]
+                elif byte_size == 2:
+                    raw_value = struct.unpack('<h', data[:2])[0]
+                elif byte_size == 4:
+                    raw_value = struct.unpack('<i', data[:4])[0]
+            display_value = str(raw_value)
+            return ViewNode(
+                name=name, type_name=type_name, kind='scalar',
+                raw_value=raw_value, display_value=display_value,
+                address=address, byte_size=byte_size,
+            )
+
+    def _infer_type_kind(self, type_name: str, byte_size: int, addr_size: int) -> str:
+        """Infer the ViewNode kind from the type name and byte size."""
+        if not type_name:
+            return 'scalar'
+
+        tn = type_name.strip()
+
+        # Pointer types
+        if tn.endswith('*') or tn.endswith(' *'):
+            if tn == 'CHAR *' or tn == 'char *' or 'char' in tn.lower() and tn.endswith('*'):
+                return 'ptr_string'
+            # Check if it points to a known struct type
+            base = tn.rstrip(' *').strip()
+            if base in self._types_index or base in self._typedef_cache:
+                return 'ptr_struct'
+            return 'ptr_scalar'
+
+        # Known struct types
+        if tn in self._types_index or tn in self._typedef_cache:
+            type_info = self._struct_type_cache.get(tn)
+            if type_info and type_info.get('kind') == 'e':
+                return 'enum'
+            return 'struct'
+
+        # Special case: char arrays
+        if byte_size == 1 and ('char' in tn.lower()):
+            return 'string'
+
+        # Known type names that indicate enums
+        if tn.startswith('TX_') and byte_size == 4:
+            # Could be an enum, check if it's in types
+            pass
+
+        return 'scalar'
+
+    def _resolve_ptr_target_type(self, type_name: str) -> Optional[Dict[str, Any]]:
+        """Resolve a pointer type name to its target type definition."""
+        if not type_name:
+            return None
+        base = type_name.rstrip(' *').strip()
+        if base == 'VOID' or base == 'void':
+            return None
+        target = self.get_struct_type(base)
+        if target:
+            return target
+        return None
+
+    def _unpack_int(self, data: bytes, size: int, is_32bit: bool) -> int:
+        """Unpack an integer value from bytes."""
+        if size <= 0:
+            return 0
+        actual = min(size, len(data))
+        if actual == 0:
+            return 0
+        if actual == 1:
+            return struct.unpack('<B', data[:1])[0]
+        elif actual == 2:
+            return struct.unpack('<H', data[:2])[0]
+        elif actual == 4:
+            return struct.unpack('<I', data[:4])[0]
+        elif actual == 8:
+            return struct.unpack('<Q', data[:8])[0]
+        else:
+            return int.from_bytes(data[:actual], byteorder='little')
+
+    def create_accessor(self, var_name: str, dump_reader) -> Optional[StructAccessor]:
+        """Create a StructAccessor for a global variable by name."""
+        sym = self.get_symbol_by_name(var_name)
+        if not sym:
+            return None
+
+        var_type = self.get_variable_type(var_name)
+        if not var_type:
+            return None
+
+        kind = var_type.get('kind', '')
+        type_name = var_type.get('name', '')
+
+        # Unwrap typedef/const/volatile
+        current = var_type
+        while current and current.get('kind') in ('const', 'volatile', 'typedef'):
+            current = current.get('ref_type')
+        if not current or current.get('kind') not in ('struct', 'union'):
+            return None
+
+        struct_view = self.read_struct_as_node(current, sym['address'], dump_reader)
+        if struct_view:
+            # Set the variable name as the root node name
+            struct_view.name = var_name
+            return StructAccessor(struct_view, dump_reader, self)
+
+        return None
+
+    # ------------------------------------------------------------------
+    # Symbol search and function lookup
+    # ------------------------------------------------------------------
+
+    def find_symbols_by_pattern(self, pattern: str) -> List[Dict[str, Any]]:
+        """Find symbols matching a regex pattern."""
+        results = []
+        try:
+            regex = re.compile(pattern, re.IGNORECASE)
+        except re.error:
+            return results
+
+        # Search ISF symbol index
+        for name in self._symbols_index:
+            if regex.search(name):
+                sym = self.get_symbol_by_name(name)
+                if sym:
+                    results.append(sym)
+
+        # Also search ELF symbol cache
+        for name, sym in self._symbol_cache.items():
+            if regex.search(name) and name not in self._symbols_index:
+                results.append(sym)
+
+        return results
+
+    def get_function_by_address(self, address: int) -> Optional[Dict[str, Any]]:
+        """Find a function containing the given address."""
+        return self.find_function_by_address(address)
+
+    def find_function_by_address(self, address: int) -> Optional[Dict[str, Any]]:
+        """Find the function containing the given address."""
+        best = None
+        best_size = 0
+
+        for sym in self._symbol_cache.values():
+            if sym.get('type') == 'function':
+                sym_addr = sym.get('address', 0)
+                sym_size = sym.get('size', 0)
+                if sym_addr <= address < sym_addr + max(sym_size, 1):
+                    if sym_size > best_size:
+                        best = sym
+                        best_size = sym_size
+
+        if best:
+            return {'name': best['name'], 'address': best['address'], 'size': best['size']}
+
+        return None
+
+    def get_var_type(self, var_name: str) -> Optional[Dict[str, Any]]:
+        """Get variable type by name."""
+        return self.get_variable_type(var_name)
+
+    def get_variable_type(self, var_name: str) -> Optional[Dict[str, Any]]:
+        """Get the type of a global variable."""
+        if self._dffi:
+            try:
+                sym = self._dffi.get_symbol(var_name)
+                if sym and sym.type_info:
+                    ti = sym.type_info
+                    return {
+                        'name': ti.get('name', ''),
+                        'kind': ti.get('kind', ''),
+                        'byte_size': ti.get('size', 0),
+                    }
+            except Exception:
+                pass
+
+        # Fallback: look up symbol from cache and try to infer type
+        sym = self.get_symbol_by_name(var_name)
+        if sym and sym.get('type'):
+            # Try to find a type with the same name
+            type_name = sym.get('type')
+            struct = self.get_struct_type(type_name)
+            if struct:
+                return struct
+
+        return None
+
+    def parse_struct_auto(self, var_name: str, dump_reader) -> Optional[Any]:
+        """Parse a struct from dump by variable name."""
+        return self.create_accessor(var_name, dump_reader)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
     def _unpack_value(self, data: bytes, size: int) -> Any:
         if size == 1:

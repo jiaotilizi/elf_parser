@@ -82,60 +82,30 @@ class ThreadXV5Plugin(RTOSPlugin):
             context
         )
     
-    def _parse_thread(self, thread_addr: int, thread_struct: Dict[str, Any], 
-                     elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
+    def _parse_thread(self, accessor, elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
         result = {
-            'address': thread_addr,
-            'name': '',
+            'address': accessor.address,
+            'name': accessor.get_string('tx_thread_name'),
             'state': '',
-            'priority': 0,
-            'stack_start': 0,
-            'stack_size': 0,
-            'stack_current': 0,
-            'stack_high_water': 0,
+            'priority': accessor.get_int('tx_thread_priority'),
+            'stack_start': accessor.get_ptr('tx_thread_stack_start'),
+            'stack_size': accessor.get_int('tx_thread_stack_size'),
+            'stack_current': accessor.get_ptr('tx_thread_stack_current'),
+            'stack_high_water': accessor.get_int('tx_thread_stack_high_water'),
             'current_pc': 0,
-            'entry_point': 0,
+            'entry_point': accessor.get_ptr('tx_thread_entry'),
         }
         
         THREAD_STATE_MAP = {
             0: 'READY',
-            1: 'RUNNING',
+            1: 'RUNNING', 
             2: 'SUSPENDED',
             3: 'DELAYED',
             4: 'PENDING',
             5: 'TIMEOUT',
         }
         
-        for member in thread_struct.get('members', []):
-            member_name = member.get('name')
-            member_offset = member.get('offset', 0)
-            member_size = member.get('byte_size', 4)
-            
-            if member_name == 'tx_thread_name':
-                name_addr = dump_reader.read_pointer(thread_addr + member_offset, is_32bit)
-                if name_addr:
-                    result['name'] = dump_reader.read_string(name_addr, 16) or ''
-            
-            elif member_name == 'tx_thread_state':
-                result['state'] = self._normalize_task_state(dump_reader.read_uint32(thread_addr + member_offset), THREAD_STATE_MAP)
-            
-            elif member_name == 'tx_thread_priority':
-                result['priority'] = dump_reader.read_uint32(thread_addr + member_offset)
-            
-            elif member_name == 'tx_thread_stack_start':
-                result['stack_start'] = dump_reader.read_pointer_or_zero(thread_addr + member_offset, is_32bit)
-            
-            elif member_name == 'tx_thread_stack_size':
-                result['stack_size'] = dump_reader.read_uint32(thread_addr + member_offset)
-            
-            elif member_name == 'tx_thread_stack_current':
-                result['stack_current'] = dump_reader.read_pointer_or_zero(thread_addr + member_offset, is_32bit)
-            
-            elif member_name == 'tx_thread_stack_high_water':
-                result['stack_high_water'] = dump_reader.read_uint32(thread_addr + member_offset)
-            
-            elif member_name == 'tx_thread_entry':
-                result['entry_point'] = dump_reader.read_pointer_or_zero(thread_addr + member_offset, is_32bit)
+        result['state'] = accessor.get_enum_name('tx_thread_state', fallback_map=THREAD_STATE_MAP)
         
         if result['stack_start'] and result['stack_size']:
             used = result['stack_size'] - result['stack_high_water']
@@ -157,36 +127,15 @@ class ThreadXV5Plugin(RTOSPlugin):
             context
         )
     
-    def _parse_semaphore(self, sem_addr: int, sem_struct: Dict[str, Any], 
-                        dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
-        result = {
-            'address': sem_addr,
-            'name': '',
-            'count': 0,
-            'max_count': 0,
+    def _parse_semaphore(self, accessor, elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
+        return {
+            'address': accessor.address,
+            'name': accessor.get_string('tx_semaphore_name'),
+            'count': accessor.get_int('tx_semaphore_count'),
+            'max_count': accessor.get_int('tx_semaphore_max_count'),
             'first_suspended': 0,
-            'suspended_count': 0,
+            'suspended_count': accessor.get_int('tx_semaphore_suspended_count'),
         }
-        
-        for member in sem_struct.get('members', []):
-            member_name = member.get('name')
-            member_offset = member.get('offset', 0)
-            
-            if member_name == 'tx_semaphore_name':
-                name_addr = dump_reader.read_pointer(sem_addr + member_offset, is_32bit)
-                if name_addr:
-                    result['name'] = dump_reader.read_string(name_addr, 16) or ''
-            
-            elif member_name == 'tx_semaphore_count':
-                result['count'] = dump_reader.read_uint32(sem_addr + member_offset)
-            
-            elif member_name == 'tx_semaphore_max_count':
-                result['max_count'] = dump_reader.read_uint32(sem_addr + member_offset)
-            
-            elif member_name == 'tx_semaphore_suspended_count':
-                result['suspended_count'] = dump_reader.read_uint32(sem_addr + member_offset)
-        
-        return result
     
     def _get_mutexes(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         return self._walk_singly_linked_list(
@@ -197,35 +146,35 @@ class ThreadXV5Plugin(RTOSPlugin):
             context
         )
     
-    def _parse_mutex(self, mutex_addr: int, mutex_struct: Dict[str, Any], 
-                    dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
+    def _parse_mutex(self, accessor, elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
+        owner = accessor.get_ptr('tx_mutex_owner')
         result = {
-            'address': mutex_addr,
-            'name': '',
-            'owner': 0,
+            'address': accessor.address,
+            'name': accessor.get_string('tx_mutex_name'),
+            'owner': owner,
+            'owner_info': None,
             'priority': 0,
-            'inherit_count': 0,
+            'inherit_count': accessor.get_int('tx_mutex_inherit_count'),
             'first_suspended': 0,
-            'suspended_count': 0,
+            'suspended_count': accessor.get_int('tx_mutex_suspended_count'),
         }
         
-        for member in mutex_struct.get('members', []):
-            member_name = member.get('name')
-            member_offset = member.get('offset', 0)
-            
-            if member_name == 'tx_mutex_name':
-                name_addr = dump_reader.read_pointer(mutex_addr + member_offset, is_32bit)
-                if name_addr:
-                    result['name'] = dump_reader.read_string(name_addr, 16) or ''
-            
-            elif member_name == 'tx_mutex_owner':
-                result['owner'] = dump_reader.read_pointer_or_zero(mutex_addr + member_offset, is_32bit)
-            
-            elif member_name == 'tx_mutex_inherit_count':
-                result['inherit_count'] = dump_reader.read_uint32(mutex_addr + member_offset)
-            
-            elif member_name == 'tx_mutex_suspended_count':
-                result['suspended_count'] = dump_reader.read_uint32(mutex_addr + member_offset)
+        if owner != 0 and elf_parser:
+            try:
+                thread_struct = elf_parser.get_struct_type('TX_THREAD')
+                if thread_struct:
+                    thread_view = elf_parser.read_struct_as_node(thread_struct, owner, dump_reader)
+                    if thread_view:
+                        from core.elf_parser.struct_accessor import StructAccessor
+                        owner_accessor = StructAccessor(thread_view, dump_reader, elf_parser)
+                        owner_name = owner_accessor.get_string('tx_thread_name')
+                        if owner_name:
+                            result['owner_info'] = {
+                                'address': owner,
+                                'name': owner_name.split('\x00')[0].strip(),
+                            }
+            except Exception:
+                pass
         
         return result
     
@@ -238,43 +187,16 @@ class ThreadXV5Plugin(RTOSPlugin):
             context
         )
     
-    def _parse_queue(self, queue_addr: int, queue_struct: Dict[str, Any], 
-                    dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
-        result = {
-            'address': queue_addr,
-            'name': '',
-            'messages_count': 0,
-            'messages_max': 0,
-            'message_size': 0,
-            'enqueue_suspended_count': 0,
-            'dequeue_suspended_count': 0,
+    def _parse_queue(self, accessor, elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
+        return {
+            'address': accessor.address,
+            'name': accessor.get_string('tx_queue_name'),
+            'messages_count': accessor.get_int('tx_queue_messages_count'),
+            'messages_max': accessor.get_int('tx_queue_messages_max'),
+            'message_size': accessor.get_int('tx_queue_message_size'),
+            'enqueue_suspended_count': accessor.get_int('tx_queue_enqueue_suspended_count'),
+            'dequeue_suspended_count': accessor.get_int('tx_queue_dequeue_suspended_count'),
         }
-        
-        for member in queue_struct.get('members', []):
-            member_name = member.get('name')
-            member_offset = member.get('offset', 0)
-            
-            if member_name == 'tx_queue_name':
-                name_addr = dump_reader.read_pointer(queue_addr + member_offset, is_32bit)
-                if name_addr:
-                    result['name'] = dump_reader.read_string(name_addr, 16) or ''
-            
-            elif member_name == 'tx_queue_messages_count':
-                result['messages_count'] = dump_reader.read_uint32(queue_addr + member_offset)
-            
-            elif member_name == 'tx_queue_messages_max':
-                result['messages_max'] = dump_reader.read_uint32(queue_addr + member_offset)
-            
-            elif member_name == 'tx_queue_message_size':
-                result['message_size'] = dump_reader.read_uint32(queue_addr + member_offset)
-            
-            elif member_name == 'tx_queue_enqueue_suspended_count':
-                result['enqueue_suspended_count'] = dump_reader.read_uint32(queue_addr + member_offset)
-            
-            elif member_name == 'tx_queue_dequeue_suspended_count':
-                result['dequeue_suspended_count'] = dump_reader.read_uint32(queue_addr + member_offset)
-        
-        return result
     
     def get_heap_info(self, context: Dict[str, Any]) -> Dict[str, Any]:
         elf_parser = context.get('elf_parser')
@@ -288,35 +210,26 @@ class ThreadXV5Plugin(RTOSPlugin):
             return {}
         
         heap_pool_addr = heap_pool_sym['address']
-        is_32bit = elf_parser.is_32bit()
         
         heap_struct = elf_parser.get_struct_type('TX_HEAP')
         if not heap_struct:
             return {}
         
+        from core.elf_parser.struct_accessor import StructAccessor
+        
+        view_node = elf_parser.read_struct_as_node(heap_struct, heap_pool_addr, dump_reader)
+        if not view_node:
+            return {}
+        
+        accessor = StructAccessor(view_node, dump_reader, elf_parser)
+        
         heap_info = {
             'address': heap_pool_addr,
-            'total_bytes': 0,
-            'available_bytes': 0,
-            'fragments': 0,
-            'largest_available': 0,
+            'total_bytes': accessor.get_int('tx_heap_total_bytes'),
+            'available_bytes': accessor.get_int('tx_heap_available_bytes'),
+            'fragments': accessor.get_int('tx_heap_fragments'),
+            'largest_available': accessor.get_int('tx_heap_largest_available'),
         }
-        
-        for member in heap_struct.get('members', []):
-            member_name = member.get('name')
-            member_offset = member.get('offset', 0)
-            
-            if member_name == 'tx_heap_total_bytes':
-                heap_info['total_bytes'] = dump_reader.read_uint32(heap_pool_addr + member_offset)
-            
-            elif member_name == 'tx_heap_available_bytes':
-                heap_info['available_bytes'] = dump_reader.read_uint32(heap_pool_addr + member_offset)
-            
-            elif member_name == 'tx_heap_fragments':
-                heap_info['fragments'] = dump_reader.read_uint32(heap_pool_addr + member_offset)
-            
-            elif member_name == 'tx_heap_largest_available':
-                heap_info['largest_available'] = dump_reader.read_uint32(heap_pool_addr + member_offset)
         
         if heap_info['total_bytes'] > 0:
             heap_info['usage_percent'] = (heap_info['total_bytes'] - heap_info['available_bytes']) / heap_info['total_bytes'] * 100

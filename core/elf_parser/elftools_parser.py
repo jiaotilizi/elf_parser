@@ -79,7 +79,9 @@ class ElftoolsParser(ELFParser):
         self._parse_elf()
     
     def _parse_elf(self):
+        t_total = time.time()
         with open(self.elf_path, 'rb') as f:
+            t0 = time.time()
             self.elffile = ELFFile(f)
             self._is_32bit = self.elffile.elfclass == 32
             self._address_size = 4 if self._is_32bit else 8
@@ -109,14 +111,37 @@ class ElftoolsParser(ELFParser):
                 [(s['vaddr'], s['vaddr'] + s['memsz'], s) for s in self._segment_cache],
                 key=lambda x: x[0]
             )
+            t_elf_init = time.time() - t0
+            print(f"  [elftools] ELF file open + headers + segments: {t_elf_init:.3f}s")
             
+            t0 = time.time()
             self._parse_symbols()
+            t_symbols = time.time() - t0
+            print(f"  [elftools] _parse_symbols: {t_symbols:.3f}s ({len(self._symbol_cache)} symbols)")
             
             if self.elffile.has_dwarf_info():
+                t0 = time.time()
                 self.dwarfinfo = self.elffile.get_dwarf_info()
+                t_dwarf = time.time() - t0
+                print(f"  [elftools] get_dwarf_info: {t_dwarf:.3f}s")
+                
+                t0 = time.time()
                 self._parse_build_info()
+                t_build = time.time() - t0
+                print(f"  [elftools] _parse_build_info: {t_build:.3f}s")
+                
+                t0 = time.time()
                 self._build_cu_index()
+                t_cu = time.time() - t0
+                print(f"  [elftools] _build_cu_index: {t_cu:.3f}s ({len(self._cu_cache)} CUs)")
+                
+                t0 = time.time()
                 self._build_type_cache()
+                t_type = time.time() - t0
+                print(f"  [elftools] _build_type_cache: {t_type:.3f}s")
+        
+        t_total = time.time() - t_total
+        print(f"  [elftools] Total parser init: {t_total:.3f}s")
     
     def _parse_symbols(self):
         for section in self.elffile.iter_sections():
@@ -278,7 +303,24 @@ class ElftoolsParser(ELFParser):
                 if die.tag == 'DW_TAG_variable':
                     var_name_to_offset[name] = die.offset
                 else:
-                    type_name_to_offset[name] = die.offset
+                    # Prefer the actual definition over a forward declaration.
+                    # If the name already exists, check if the existing DIE
+                    # is a declaration and the new one is not — replace it.
+                    existing_offset = type_name_to_offset.get(name)
+                    if existing_offset is not None:
+                        existing_die = die_by_offset.get(existing_offset)
+                        if existing_die is not None:
+                            existing_is_decl = existing_die.attributes.get('DW_AT_declaration')
+                            new_is_decl = die.attributes.get('DW_AT_declaration')
+                            if existing_is_decl and not new_is_decl:
+                                type_name_to_offset[name] = die.offset
+                            elif not existing_is_decl and new_is_decl:
+                                pass  # Keep the existing definition
+                            elif (existing_die.attributes.get('DW_AT_byte_size') is None
+                                  and die.attributes.get('DW_AT_byte_size') is not None):
+                                type_name_to_offset[name] = die.offset
+                    else:
+                        type_name_to_offset[name] = die.offset
 
         self._die_by_offset = die_by_offset
         self._type_name_to_offset = type_name_to_offset

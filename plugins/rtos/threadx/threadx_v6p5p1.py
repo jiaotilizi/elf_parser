@@ -22,6 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 import logging
+import time
 from typing import Dict, List, Optional, Any
 
 from ..base import RTOSPlugin
@@ -256,7 +257,8 @@ class ThreadXV6Plugin(RTOSPlugin):
                 if thread_struct:
                     thread_view = elf_parser.read_struct_as_node(thread_struct, owner, dump_reader)
                     if thread_view:
-                        owner_accessor = elf_parser.create_accessor(thread_view, dump_reader)
+                        from core.elf_parser.struct_accessor import StructAccessor
+                        owner_accessor = StructAccessor(thread_view, dump_reader, elf_parser)
                         owner_info = self._parse_thread(owner_accessor, elf_parser, dump_reader, is_32bit)
                         if owner_info:
                             result['owner_info'] = {
@@ -418,7 +420,8 @@ class ThreadXV6Plugin(RTOSPlugin):
         if not view_node:
             return {}
 
-        accessor = elf_parser.create_accessor(view_node, dump_reader)
+        from core.elf_parser.struct_accessor import StructAccessor
+        accessor = StructAccessor(view_node, dump_reader, elf_parser)
 
         total_bytes = accessor.get_int('tx_heap_total_bytes')
         available_bytes = accessor.get_int('tx_heap_available_bytes')
@@ -451,14 +454,21 @@ class ThreadXV6Plugin(RTOSPlugin):
     
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         self._context = context
-        return {
-            'tasks': self.get_resource('tasks', context),
-            'semaphores': self.get_resource('semaphores', context),
-            'mutexes': self.get_resource('mutexes', context),
-            'queues': self.get_resource('queues', context),
-            'events': self.get_resource('events', context),
-            'timers': self.get_resource('timers', context),
-            'block_pools': self.get_resource('block_pools', context),
-            'byte_pools': self.get_resource('byte_pools', context),
-            'heap': self.get_heap_info(context),
-        }
+        result = {}
+        
+        for key, func in [('tasks', self._get_tasks), ('semaphores', self._get_semaphores),
+                          ('mutexes', self._get_mutexes), ('queues', self._get_queues),
+                          ('events', self._get_events), ('timers', self._get_timers),
+                          ('block_pools', self._get_block_pools), ('byte_pools', self._get_byte_pools)]:
+            t0 = time.time()
+            result[key] = func(context)
+            elapsed = time.time() - t0
+            count = len(result[key]) if isinstance(result[key], list) else 0
+            print(f"    {key}: {elapsed:.3f}s ({count} items)")
+        
+        t0 = time.time()
+        result['heap'] = self.get_heap_info(context)
+        elapsed = time.time() - t0
+        print(f"    heap: {elapsed:.3f}s")
+        
+        return result

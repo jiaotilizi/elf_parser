@@ -124,25 +124,6 @@ class RTOSPlugin(Plugin):
     def _is_32bit(self) -> bool:
         return self._elf_parser.is_32bit() if self._elf_parser else True
     
-    # DEPRECATED: Use StructAccessor.get() with dotted paths instead.
-    # This method is kept for backward compatibility with plugins that
-    # haven't migrated to the StructAccessor API.
-    def _find_member_offset(self, struct_type: Dict[str, Any], member_name: str, default_offset: int = 0) -> int:
-        if not struct_type:
-            return default_offset
-        for member in struct_type.get('members', []):
-            if member.get('name') == member_name:
-                return member.get('offset', default_offset)
-        return default_offset
-    
-    def _find_member(self, struct_type: Dict[str, Any], member_name: str) -> Optional[Dict[str, Any]]:
-        if not struct_type:
-            return None
-        for member in struct_type.get('members', []):
-            if member.get('name') == member_name:
-                return member
-        return None
-    
     def _read_string(self, addr: int, max_length: int = 32) -> str:
         if not self._dump_reader or addr <= 0:
             return ''
@@ -150,51 +131,14 @@ class RTOSPlugin(Plugin):
             return self._dump_reader.read_string(addr, max_length) or ''
         except Exception:
             return ''
-
-    # DEPRECATED: Use StructAccessor.get_string() instead.
-    # This method is kept for backward compatibility with plugins that
-    # haven't migrated to the StructAccessor API.
-    def _read_resource_name(self, addr: int, name_ptr_addr: int,
-                            is_32bit: bool = True, max_length: int = 32) -> str:
-        """Read a resource name from a pointer field.
-
-        Tries to read the string from the dump at the pointer address first.
-        If the dump read fails (e.g., name is in .rodata not in the dump),
-        falls back to reading from the ELF file.
-
-        Args:
-            addr: Base address of the resource struct.
-            name_ptr_addr: Address of the name pointer field (addr + offset).
-            is_32bit: Whether the target is 32-bit.
-            max_length: Maximum string length.
-        """
-        name_addr = self._dump_reader.read_pointer(name_ptr_addr, is_32bit)
-        if not name_addr:
-            return ''
-
-        name = self._read_string(name_addr, max_length)
-        if name:
-            return name
-
-        # Fallback: try reading from ELF (e.g., .rodata section)
-        if self._elf_parser:
-            elf_data = self._elf_parser.read_memory_from_elf(name_addr, max_length)
-            if elf_data:
-                null_pos = elf_data.find(b'\x00')
-                if null_pos >= 0:
-                    elf_data = elf_data[:null_pos]
-                try:
-                    return elf_data.decode('utf-8')
-                except UnicodeDecodeError:
-                    return elf_data.decode('latin-1')
-        return ''
     
     def _walk_singly_linked_list(self,
                                 symbol_name: str,
                                 struct_name: str,
                                 next_field_name: str,
                                 parse_func: Callable,
-                                context: Dict[str, Any]) -> List[Dict[str, Any]]:
+                                context: Dict[str, Any],
+                                next_field_fallback_offset: int = 0) -> List[Dict[str, Any]]:
         elf_parser = context.get('elf_parser') or self._elf_parser
         dump_reader = context.get('dump_reader') or self._dump_reader
 
@@ -219,38 +163,32 @@ class RTOSPlugin(Plugin):
         if not head_ptr:
             return []
 
-        next_offset = self._find_member_offset(struct_type, next_field_name)
-
-        # Detect if the parser supports the new StructAccessor API
-        _has_read_as_node = hasattr(elf_parser, 'read_struct_as_node')
+        from core.elf_parser.struct_accessor import StructAccessor
 
         visited = set()
         current_ptr = head_ptr
         results = []
 
-        # Import lazily to avoid circular imports
-        from core.elf_parser.struct_accessor import StructAccessor
-
         while current_ptr and current_ptr not in visited:
             visited.add(current_ptr)
 
-            if _has_read_as_node:
-                # New API: create StructAccessor from ViewNode
-                view_node = elf_parser.read_struct_as_node(struct_type, current_ptr, dump_reader)
-                if view_node is None:
-                    current_ptr = dump_reader.read_pointer(current_ptr + next_offset, is_32bit)
-                    continue
-                accessor = StructAccessor(view_node, dump_reader, elf_parser)
-                item_info = parse_func(accessor, elf_parser, dump_reader, is_32bit)
-            else:
-                # Old API: pass raw struct_type dict
-                item_info = parse_func(current_ptr, struct_type, elf_parser, dump_reader, is_32bit)
+            view_node = elf_parser.read_struct_as_node(struct_type, current_ptr, dump_reader)
+            if view_node is None:
+                # Robustness: skip bad node, try to read next pointer from raw memory
+                if next_field_fallback_offset > 0:
+                    current_ptr = dump_reader.read_pointer(
+                        current_ptr + next_field_fallback_offset, is_32bit)
+                else:
+                    break
+                continue
 
+            accessor = StructAccessor(view_node, dump_reader, elf_parser)
+            item_info = parse_func(accessor, elf_parser, dump_reader, is_32bit)
             if item_info:
                 results.append(item_info)
 
-            next_ptr = dump_reader.read_pointer(current_ptr + next_offset, is_32bit)
-            current_ptr = next_ptr
+            # Use StructAccessor to get the next pointer — no manual offset calculation
+            current_ptr = accessor.get_pointer(next_field_name)
 
         return results
     
@@ -270,12 +208,6 @@ class RTOSPlugin(Plugin):
             return 0.0
 
         return used / stack_size * 100 if stack_size > 0 else 0.0
-    
-    # DEPRECATED: Use StructAccessor.get_enum_name() with fallback_map instead.
-    # This method is kept for backward compatibility with plugins that
-    # haven't migrated to the StructAccessor API.
-    def _normalize_task_state(self, state: int, state_map: Dict[int, str]) -> str:
-        return state_map.get(state, f'UNKNOWN({state})')
     
     def _normalize_resource_type(self, resource_type: str) -> str:
         return normalize_resource_type(resource_type)

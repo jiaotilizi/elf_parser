@@ -117,6 +117,29 @@ class ELFParser(ABC):
         """Get all symbols in the ELF file."""
         pass
 
+    def get_member_offset(self, struct_name: str, member_name: str, default: int = 0) -> int:
+        """Get the byte offset of a member within a struct type.
+
+        This is a DWARF-level type introspection query, not data access.
+        Used by FreeRTOS doubly-linked list traversal to compute
+        container-of relationships (e.g., TCB address from ListItem address).
+
+        Args:
+            struct_name: DWARF struct/union type name.
+            member_name: Name of the member within the struct.
+            default: Value to return if struct or member is not found.
+
+        Returns:
+            Byte offset of the member within the struct.
+        """
+        struct_type = self.get_struct_type(struct_name)
+        if not struct_type:
+            return default
+        for member in struct_type.get('members', []):
+            if member.get('name') == member_name:
+                return member.get('offset', default)
+        return default
+
 
 class ELFParserFactory:
     """Factory for creating ELF parser instances based on configuration.

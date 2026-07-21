@@ -329,7 +329,21 @@ class StructAccessor:
                 return default
             try:
                 s = self._dump_reader.read_string(ptr_val, max_length=_MAX_STRING_READ_LENGTH)
-                return s if s is not None else default
+                if s:
+                    return s
+                # Fallback: try reading from ELF (e.g., .rodata section in FLASH)
+                if self._elf_parser:
+                    elf_data = self._elf_parser.read_memory_from_elf(
+                        ptr_val, _MAX_STRING_READ_LENGTH)
+                    if elf_data:
+                        null_pos = elf_data.find(b'\x00')
+                        if null_pos >= 0:
+                            elf_data = elf_data[:null_pos]
+                        try:
+                            return elf_data.decode('utf-8')
+                        except UnicodeDecodeError:
+                            return elf_data.decode('latin-1')
+                return default
             except Exception:
                 return default
 
@@ -382,6 +396,14 @@ class StructAccessor:
         if node.kind in ('ptr_struct', 'ptr_string', 'ptr_func', 'ptr_scalar'):
             return node.raw_value if node.raw_value is not None else 0
         return 0
+
+    def get_pointer(self, name: str) -> int:
+        """Alias for get_ptr — get a pointer value as integer.
+
+        This is the canonical name for linked-list traversal
+        (e.g., accessor.get_pointer('tx_thread_created_next')).
+        """
+        return self.get_ptr(name)
 
     def deref(self, ptr_node_name: str) -> Optional['StructAccessor']:
         """Lazily dereference a ptr_struct member and return a StructAccessor.
