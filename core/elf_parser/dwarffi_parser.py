@@ -526,7 +526,12 @@ class DwarffiParser(ELFParser):
             for member_name, member in dtype.members.items():
                 type_info = member.type_info if hasattr(member, 'type_info') and member.type_info else {}
                 type_kind = type_info.get('kind', 'unknown')
-                member_size = self._address_size if type_kind == 'pointer' else 0
+                if type_kind == 'pointer':
+                    member_size = self._address_size
+                elif hasattr(member, 'size') and member.size > 0:
+                    member_size = member.size
+                else:
+                    member_size = self._address_size
                 type_name = type_info.get('name', str(type_kind))
                 result['members'].append({
                     'name': member.name,
@@ -534,6 +539,7 @@ class DwarffiParser(ELFParser):
                     'size': member_size,
                     'type': type_name,
                 })
+            result['members'].sort(key=lambda m: m['offset'])
         return result
 
     # ------------------------------------------------------------------
