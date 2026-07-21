@@ -101,11 +101,10 @@ class Trace32Display(DisplayBase):
     def show_mutexes(self, data: List[Dict]):
         print("\nThreadX.Mutex")
         print("=" * 78)
-        print("magic____|name________|count|prio_|owner_______|suspended___")
+        print("magic____|count|prio_|owner_______|suspended___|name________")
         
         for item in data:
             magic = self._format_hex(item.get('address', 0))
-            name = item.get('name', '')[:10]
             count = item.get('inherit_count', 0)
             count_str = f"{count:>4}."
             prio = item.get('priority', 0)
@@ -117,8 +116,9 @@ class Trace32Display(DisplayBase):
             owner = owner[:11]
             suspended = item.get('suspended_count', 0)
             suspended_str = f"{suspended:>7}. "
+            name = item.get('name', '')[:10]
             
-            print(f"{magic} |{name:<10}|{count_str}|{prio_str}|{owner:<11}|{suspended_str}")
+            print(f"{magic} |{count_str}|{prio_str}|{owner:<11}|{suspended_str}|{name:<10}")
 
     def show_queues(self, data: List[Dict]):
         print("\nThreadX.Queue")

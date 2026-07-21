@@ -34,12 +34,12 @@ class DataAdapter:
             primary_key='address',
             fields=[
                 {'name': 'address', 'label': 'Address', 'type': 'hex'},
-                {'name': 'name', 'label': 'Name', 'type': 'string'},
                 {'name': 'state_name', 'label': 'State', 'type': 'string'},
                 {'name': 'priority', 'label': 'Priority', 'type': 'number'},
                 {'name': 'schedule_ratio', 'label': 'Sched %', 'type': 'number'},
                 {'name': 'stack_size', 'label': 'Stack Sz', 'type': 'number'},
                 {'name': 'stack_usage', 'label': 'Stack Used', 'type': 'number'},
+                {'name': 'name', 'label': 'Name', 'type': 'string'},
             ]
         ),
         'mutexes': ResourceMetadata(
@@ -49,9 +49,9 @@ class DataAdapter:
             primary_key='address',
             fields=[
                 {'name': 'address', 'label': 'Address', 'type': 'hex'},
-                {'name': 'name', 'label': 'Name', 'type': 'string'},
                 {'name': 'owner_info.name', 'label': 'Owner', 'type': 'string'},
                 {'name': 'priority', 'label': 'Priority', 'type': 'number'},
+                {'name': 'name', 'label': 'Name', 'type': 'string'},
             ]
         ),
         'semaphores': ResourceMetadata(
@@ -61,9 +61,9 @@ class DataAdapter:
             primary_key='address',
             fields=[
                 {'name': 'address', 'label': 'Address', 'type': 'hex'},
-                {'name': 'name', 'label': 'Name', 'type': 'string'},
                 {'name': 'count', 'label': 'Count', 'type': 'number'},
                 {'name': 'max_count', 'label': 'Max', 'type': 'number'},
+                {'name': 'name', 'label': 'Name', 'type': 'string'},
             ]
         ),
         'queues': ResourceMetadata(
@@ -73,9 +73,9 @@ class DataAdapter:
             primary_key='address',
             fields=[
                 {'name': 'address', 'label': 'Address', 'type': 'hex'},
-                {'name': 'name', 'label': 'Name', 'type': 'string'},
                 {'name': 'messages', 'label': 'Messages', 'type': 'number'},
                 {'name': 'max_messages', 'label': 'Max', 'type': 'number'},
+                {'name': 'name', 'label': 'Name', 'type': 'string'},
             ]
         ),
         'events': ResourceMetadata(
@@ -85,8 +85,8 @@ class DataAdapter:
             primary_key='address',
             fields=[
                 {'name': 'address', 'label': 'Address', 'type': 'hex'},
-                {'name': 'name', 'label': 'Name', 'type': 'string'},
                 {'name': 'flags', 'label': 'Flags', 'type': 'hex'},
+                {'name': 'name', 'label': 'Name', 'type': 'string'},
             ]
         ),
         'timers': ResourceMetadata(
@@ -96,10 +96,10 @@ class DataAdapter:
             primary_key='address',
             fields=[
                 {'name': 'address', 'label': 'Address', 'type': 'hex'},
-                {'name': 'name', 'label': 'Name', 'type': 'string'},
                 {'name': 'state_name', 'label': 'State', 'type': 'string'},
                 {'name': 'period_ticks', 'label': 'Period', 'type': 'number'},
                 {'name': 'ticks_remaining', 'label': 'Remaining', 'type': 'number'},
+                {'name': 'name', 'label': 'Name', 'type': 'string'},
             ]
         ),
         'block_pools': ResourceMetadata(
@@ -109,9 +109,9 @@ class DataAdapter:
             primary_key='address',
             fields=[
                 {'name': 'address', 'label': 'Address', 'type': 'hex'},
-                {'name': 'name', 'label': 'Name', 'type': 'string'},
                 {'name': 'available_blocks', 'label': 'Available', 'type': 'number'},
                 {'name': 'total_blocks', 'label': 'Total', 'type': 'number'},
+                {'name': 'name', 'label': 'Name', 'type': 'string'},
             ]
         ),
         'byte_pools': ResourceMetadata(
@@ -121,9 +121,9 @@ class DataAdapter:
             primary_key='address',
             fields=[
                 {'name': 'address', 'label': 'Address', 'type': 'hex'},
-                {'name': 'name', 'label': 'Name', 'type': 'string'},
                 {'name': 'available_bytes', 'label': 'Available', 'type': 'number'},
                 {'name': 'total_bytes', 'label': 'Total', 'type': 'number'},
+                {'name': 'name', 'label': 'Name', 'type': 'string'},
             ]
         ),
         'test_points': ResourceMetadata(
@@ -133,9 +133,9 @@ class DataAdapter:
             primary_key='id',
             fields=[
                 {'name': 'id', 'label': 'ID', 'type': 'number'},
-                {'name': 'name', 'label': 'Name', 'type': 'string'},
                 {'name': 'value', 'label': 'Value', 'type': 'string'},
                 {'name': 'timestamp', 'label': 'Time', 'type': 'string'},
+                {'name': 'name', 'label': 'Name', 'type': 'string'},
             ]
         ),
         'assert_info': ResourceMetadata(
