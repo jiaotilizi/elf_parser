@@ -323,7 +323,7 @@ class StructAccessor:
             return node.display_value if node.display_value else default
 
         # char* pointer → kind='ptr_string', lazy dereference
-        if node.kind == 'ptr_string':
+        if node.kind == 'ptr_string' or node.kind == 'ptr_scalar':
             ptr_val = node.raw_value
             if not ptr_val:
                 return default

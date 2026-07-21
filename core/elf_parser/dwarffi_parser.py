@@ -1114,10 +1114,14 @@ class DwarffiParser(ELFParser):
         if tn.endswith('*') or tn.endswith(' *'):
             if tn == 'CHAR *' or tn == 'char *' or 'char' in tn.lower() and tn.endswith('*'):
                 return 'ptr_string'
-            # Check if it points to a known struct type
             base = tn.rstrip(' *').strip()
             if base in self._types_index or base in self._typedef_cache:
                 return 'ptr_struct'
+            return 'ptr_scalar'
+
+        # Special case: ISF stores pointer types as 'pointer' without target type info
+        # When byte_size matches address size, treat as pointer
+        if tn == 'pointer' and byte_size == addr_size:
             return 'ptr_scalar'
 
         # Known struct types
