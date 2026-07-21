@@ -29,6 +29,10 @@ class ModulePlugin(Plugin):
     def __init__(self, name: str, version: str, module_type: str, description: str = ""):
         super().__init__(name, version, description)
         self.module_type = module_type
+        self._elf_parser = None
+        self._dump_reader = None
+        self._profile = None
+        self._context = None
 
     def initialize(self, context: Dict[str, Any]) -> bool:
         """Initialize the module plugin with execution context.
@@ -40,11 +44,19 @@ class ModulePlugin(Plugin):
         self._dump_reader = context.get('dump_reader')
         self._profile = context.get('profile')
         self._context = context
-        # Backward-compatible non-underscore attributes
-        self.elf_parser = self._elf_parser
-        self.dump_reader = self._dump_reader
-        self.profile = self._profile
         return True
+
+    @property
+    def elf_parser(self):
+        return self._elf_parser
+
+    @property
+    def dump_reader(self):
+        return self._dump_reader
+
+    @property
+    def profile(self):
+        return self._profile
 
     def _get_elf_parser(self):
         return self._elf_parser

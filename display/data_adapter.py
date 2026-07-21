@@ -210,6 +210,14 @@ class DataAdapter:
         if resource_type in self._metadata_cache:
             return self._metadata_cache[resource_type]
         
+        plugins = self.context.get('plugins', [])
+        for plugin in plugins:
+            if hasattr(plugin, 'get_resource_metadata'):
+                metadata = plugin.get_resource_metadata(resource_type)
+                if metadata is not None:
+                    self._metadata_cache[resource_type] = metadata
+                    return metadata
+        
         if resource_type in self.DEFAULT_METADATA:
             return self.DEFAULT_METADATA[resource_type]
         

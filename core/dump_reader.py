@@ -44,10 +44,12 @@ class MemoryRegion:
 
 
 class DumpReader:
-    def __init__(self, dump_path: str, memory_regions: List[Dict[str, Any]] = None):
+    def __init__(self, dump_path: str, memory_regions: List[Dict[str, Any]] = None, endianness: str = 'little'):
         self.dump_path = dump_path
         self.dump_data = b''
         self.memory_regions: List[MemoryRegion] = []
+        self.endianness = endianness
+        self._fmt_prefix = '<' if endianness == 'little' else '>'
         
         self._load_dump()
         self._init_memory_regions(memory_regions)
@@ -94,49 +96,49 @@ class DumpReader:
     def read_uint8(self, address: int) -> Optional[int]:
         data = self.read_memory(address, 1)
         if data:
-            return struct.unpack('<B', data)[0]
+            return struct.unpack(self._fmt_prefix + 'B', data)[0]
         return None
     
     def read_uint16(self, address: int) -> Optional[int]:
         data = self.read_memory(address, 2)
         if data:
-            return struct.unpack('<H', data)[0]
+            return struct.unpack(self._fmt_prefix + 'H', data)[0]
         return None
     
     def read_uint32(self, address: int) -> Optional[int]:
         data = self.read_memory(address, 4)
         if data:
-            return struct.unpack('<I', data)[0]
+            return struct.unpack(self._fmt_prefix + 'I', data)[0]
         return None
     
     def read_uint64(self, address: int) -> Optional[int]:
         data = self.read_memory(address, 8)
         if data:
-            return struct.unpack('<Q', data)[0]
+            return struct.unpack(self._fmt_prefix + 'Q', data)[0]
         return None
     
     def read_int8(self, address: int) -> Optional[int]:
         data = self.read_memory(address, 1)
         if data:
-            return struct.unpack('<b', data)[0]
+            return struct.unpack(self._fmt_prefix + 'b', data)[0]
         return None
     
     def read_int16(self, address: int) -> Optional[int]:
         data = self.read_memory(address, 2)
         if data:
-            return struct.unpack('<h', data)[0]
+            return struct.unpack(self._fmt_prefix + 'h', data)[0]
         return None
     
     def read_int32(self, address: int) -> Optional[int]:
         data = self.read_memory(address, 4)
         if data:
-            return struct.unpack('<i', data)[0]
+            return struct.unpack(self._fmt_prefix + 'i', data)[0]
         return None
     
     def read_int64(self, address: int) -> Optional[int]:
         data = self.read_memory(address, 8)
         if data:
-            return struct.unpack('<q', data)[0]
+            return struct.unpack(self._fmt_prefix + 'q', data)[0]
         return None
     
     def read_pointer(self, address: int, is_32bit: bool = True) -> Optional[int]:

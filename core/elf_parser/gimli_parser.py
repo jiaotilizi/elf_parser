@@ -24,11 +24,12 @@ SOFTWARE.
 import logging
 from typing import Dict, List, Optional, Any
 
-from .base import ELFParser
+from .base import ELFParser, ELFParserFactory
 
 logger = logging.getLogger(__name__)
 
 
+@ELFParserFactory.register('gimli')
 class GimliParser(ELFParser):
     """ELF parser using Rust gimli library for high-performance DWARF parsing.
 

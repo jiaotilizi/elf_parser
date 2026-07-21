@@ -499,19 +499,34 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         
         return result
     
-    def _get_semaphores(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        semaphores = []
+    def _get_handle_based_resources(self, context: Dict[str, Any], handle_types: List[str],
+                                     struct_name: str, expected_classification: str,
+                                     parse_func) -> List[Dict[str, Any]]:
+        """通用句柄驱动资源发现方法。
+
+        Args:
+            context: 执行上下文
+            handle_types: 句柄类型列表（如 ['SemaphoreHandle_t']）
+            struct_name: 目标结构体名称
+            expected_classification: 期望的分类类型（用于过滤），None 表示不过滤
+            parse_func: 解析函数，接收 (accessor, elf_parser, dump_reader, is_32bit)
+
+        Returns:
+            资源列表
+        """
+        resources = []
         elf_parser = context.get('elf_parser')
         dump_reader = context.get('dump_reader')
         
         if not elf_parser or not dump_reader:
-            return semaphores
+            return resources
         
         is_32bit = elf_parser.is_32bit()
-        queue_struct = elf_parser.get_struct_type('QueueDefinition')
+        target_struct = elf_parser.get_struct_type(struct_name)
+        if not target_struct:
+            return resources
         
-        # 通过 DWARF 类型发现 SemaphoreHandle_t 句柄（不依赖变量名称）
-        handles = self._discover_handles_by_type(elf_parser, ['SemaphoreHandle_t'])
+        handles = self._discover_handles_by_type(elf_parser, handle_types)
         
         from core.elf_parser.struct_accessor import StructAccessor
         
@@ -520,20 +535,33 @@ class FreeRTOSV11Plugin(RTOSPlugin):
             if not obj_addr:
                 continue
             
-            # 分类：排除互斥锁和队列
-            classification = self._classify_queue_object(obj_addr, queue_struct, dump_reader, is_32bit, elf_parser)
-            if classification == 'mutex' or classification == 'queue':
-                continue
+            if expected_classification is not None:
+                classification = self._classify_queue_object(obj_addr, target_struct, dump_reader, is_32bit, elf_parser)
+                if classification != expected_classification:
+                    continue
             
-            view_node = elf_parser.read_struct_as_node(queue_struct, obj_addr, dump_reader)
+            view_node = elf_parser.read_struct_as_node(target_struct, obj_addr, dump_reader)
             if view_node:
                 accessor = StructAccessor(view_node, dump_reader, elf_parser)
-                sem_info = self._parse_semaphore(accessor, elf_parser, dump_reader, is_32bit)
-                if sem_info and sem_info['max_count'] > 0:
-                    sem_info['name'] = h['name']
-                    semaphores.append(sem_info)
+                resource_info = parse_func(accessor, elf_parser, dump_reader, is_32bit)
+                if resource_info:
+                    resource_info['name'] = h['name']
+                    resources.append(resource_info)
         
-        return semaphores
+        return resources
+    
+    def _get_semaphores(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        def filter_fn(accessor, elf_parser, dump_reader, is_32bit):
+            sem_info = self._parse_semaphore(accessor, elf_parser, dump_reader, is_32bit)
+            return sem_info if sem_info and sem_info['max_count'] > 0 else None
+        
+        return self._get_handle_based_resources(
+            context,
+            ['SemaphoreHandle_t'],
+            'QueueDefinition',
+            'semaphore',
+            filter_fn
+        )
     
     def _classify_queue_object(self, obj_addr: int, queue_struct: Dict[str, Any],
                                 dump_reader, is_32bit: bool, elf_parser) -> str:
@@ -594,40 +622,17 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         return result
     
     def _get_mutexes(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        mutexes = []
-        elf_parser = context.get('elf_parser')
-        dump_reader = context.get('dump_reader')
+        def filter_fn(accessor, elf_parser, dump_reader, is_32bit):
+            mutex_info = self._parse_mutex(accessor, elf_parser, dump_reader, is_32bit)
+            return mutex_info if mutex_info and mutex_info['count'] >= 0 else None
         
-        if not elf_parser or not dump_reader:
-            return mutexes
-        
-        is_32bit = elf_parser.is_32bit()
-        queue_struct = elf_parser.get_struct_type('QueueDefinition')
-        
-        # 通过 DWARF 类型发现 SemaphoreHandle_t 句柄（不依赖变量名称）
-        handles = self._discover_handles_by_type(elf_parser, ['SemaphoreHandle_t'])
-        
-        from core.elf_parser.struct_accessor import StructAccessor
-        
-        for h in handles:
-            obj_addr = dump_reader.read_pointer(h['address'], is_32bit)
-            if not obj_addr:
-                continue
-            
-            # 分类：仅保留互斥锁
-            classification = self._classify_queue_object(obj_addr, queue_struct, dump_reader, is_32bit, elf_parser)
-            if classification != 'mutex':
-                continue
-            
-            view_node = elf_parser.read_struct_as_node(queue_struct, obj_addr, dump_reader)
-            if view_node:
-                accessor = StructAccessor(view_node, dump_reader, elf_parser)
-                mutex_info = self._parse_mutex(accessor, elf_parser, dump_reader, is_32bit)
-                if mutex_info and mutex_info['count'] >= 0:
-                    mutex_info['name'] = h['name']
-                    mutexes.append(mutex_info)
-        
-        return mutexes
+        return self._get_handle_based_resources(
+            context,
+            ['SemaphoreHandle_t'],
+            'QueueDefinition',
+            'mutex',
+            filter_fn
+        )
     
     def _parse_mutex(self, accessor, elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
         owner = accessor.get_ptr('pxMutexHolder')
@@ -663,40 +668,13 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         return result
     
     def _get_queues(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        queues = []
-        elf_parser = context.get('elf_parser')
-        dump_reader = context.get('dump_reader')
-        
-        if not elf_parser or not dump_reader:
-            return queues
-        
-        is_32bit = elf_parser.is_32bit()
-        queue_struct = elf_parser.get_struct_type('QueueDefinition')
-        
-        # 通过 DWARF 类型发现 QueueHandle_t 句柄（不依赖变量名称）
-        handles = self._discover_handles_by_type(elf_parser, ['QueueHandle_t'])
-        
-        from core.elf_parser.struct_accessor import StructAccessor
-        
-        for h in handles:
-            obj_addr = dump_reader.read_pointer(h['address'], is_32bit)
-            if not obj_addr:
-                continue
-            
-            # 分类：仅保留真正的队列（排除信号量和互斥锁）
-            classification = self._classify_queue_object(obj_addr, queue_struct, dump_reader, is_32bit, elf_parser)
-            if classification != 'queue':
-                continue
-            
-            view_node = elf_parser.read_struct_as_node(queue_struct, obj_addr, dump_reader)
-            if view_node:
-                accessor = StructAccessor(view_node, dump_reader, elf_parser)
-                queue_info = self._parse_queue(accessor, elf_parser, dump_reader, is_32bit)
-                if queue_info:
-                    queue_info['name'] = h['name']
-                    queues.append(queue_info)
-        
-        return queues
+        return self._get_handle_based_resources(
+            context,
+            ['QueueHandle_t'],
+            'QueueDefinition',
+            'queue',
+            self._parse_queue
+        )
     
     def _parse_queue(self, accessor, elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
         return {

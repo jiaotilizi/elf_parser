@@ -76,3 +76,10 @@ class Plugin:
             'display_type': 'table',
             'title': self.name,
         }
+    
+    def get_resource_metadata(self, resource_type: str):
+        return None
+    
+    def shutdown(self, context: Dict[str, Any]) -> None:
+        """Clean up resources when the plugin is unloaded."""
+        pass

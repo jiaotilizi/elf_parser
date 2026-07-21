@@ -31,7 +31,7 @@ import hashlib
 import zlib
 from typing import Dict, List, Optional, Any, Tuple, Sequence, Iterator
 
-from .base import ELFParser
+from .base import ELFParser, ELFParserFactory
 from .struct_accessor import ViewNode, StructAccessor
 
 logger = logging.getLogger(__name__)
@@ -229,6 +229,7 @@ def _compute_crc32_chunked(buffer: mmap.mmap, start: int, size: int) -> int:
 # ---------------------------------------------------------------------------
 # DwarffiParser
 # ---------------------------------------------------------------------------
+@ELFParserFactory.register('dwarffi')
 class DwarffiParser(ELFParser):
     """ELF parser using dwarffi for high-performance DWARF parsing.
 
@@ -1627,5 +1628,3 @@ class DwarffiParser(ELFParser):
             return int.from_bytes(data, byteorder='little')
 
 
-from .base import ELFParserFactory
-ELFParserFactory.register('dwarffi', DwarffiParser)

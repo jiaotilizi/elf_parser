@@ -34,12 +34,14 @@ try:
     from core.dump_reader import DumpReader
     from core.profile_loader import ProfileLoader
     from core.plugin_registry import PluginRegistry
+    from core.context import PluginContext
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from core.elf_parser import ELFParserFactory
     from core.dump_reader import DumpReader
     from core.profile_loader import ProfileLoader
     from core.plugin_registry import PluginRegistry
+    from core.context import PluginContext
 
 from display import DisplayFactory
 from display.data_adapter import DataAdapter
@@ -137,14 +139,14 @@ def analyze(elf_path: str, dump_path: str, profile_name: str) -> dict:
     plugin_registry = PluginRegistry()
     plugins = plugin_registry.get_plugins_for_profile(profile)
     
-    context = {
+    context = PluginContext({
         'elf_parser': elf_parser,
         'dump_reader': dump_reader,
         'profile': profile,
         'results': {},
         'config': {},
         'plugins': plugins,
-    }
+    })
     
     print(f"Initializing plugins...")
     for plugin in plugins:
@@ -162,6 +164,12 @@ def analyze(elf_path: str, dump_path: str, profile_name: str) -> dict:
             plugin_results[plugin.name] = {'error': str(e)}
     
     context['results'] = plugin_results
+    
+    for plugin in plugins:
+        try:
+            plugin.shutdown(context)
+        except Exception as e:
+            print(f"Error shutting down plugin {plugin.name}: {e}")
     
     return {
         'elf_parser': elf_parser,

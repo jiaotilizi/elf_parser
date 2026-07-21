@@ -34,7 +34,7 @@ from elftools.dwarf.dwarfinfo import DWARFInfo
 from elftools.dwarf.compileunit import CompileUnit
 from elftools.dwarf.die import DIE
 
-from .base import ELFParser
+from .base import ELFParser, ELFParserFactory
 from .struct_accessor import ViewNode, StructAccessor
 
 logger = logging.getLogger(__name__)
@@ -46,6 +46,7 @@ _DW_ATE_signed = 0x05
 _DW_ATE_signed_char = 0x06
 
 
+@ELFParserFactory.register('elftools')
 class ElftoolsParser(ELFParser):
     # Maximum recursion depth for DWARF type parsing and _read_typed_value.
     # Based on empirical observation of embedded RTOS struct nesting depth;
@@ -112,36 +113,36 @@ class ElftoolsParser(ELFParser):
                 key=lambda x: x[0]
             )
             t_elf_init = time.time() - t0
-            print(f"  [elftools] ELF file open + headers + segments: {t_elf_init:.3f}s")
+            logger.debug("[elftools] ELF file open + headers + segments: %.3fs", t_elf_init)
             
             t0 = time.time()
             self._parse_symbols()
             t_symbols = time.time() - t0
-            print(f"  [elftools] _parse_symbols: {t_symbols:.3f}s ({len(self._symbol_cache)} symbols)")
+            logger.debug("[elftools] _parse_symbols: %.3fs (%d symbols)", t_symbols, len(self._symbol_cache))
             
             if self.elffile.has_dwarf_info():
                 t0 = time.time()
                 self.dwarfinfo = self.elffile.get_dwarf_info()
                 t_dwarf = time.time() - t0
-                print(f"  [elftools] get_dwarf_info: {t_dwarf:.3f}s")
+                logger.debug("[elftools] get_dwarf_info: %.3fs", t_dwarf)
                 
                 t0 = time.time()
                 self._parse_build_info()
                 t_build = time.time() - t0
-                print(f"  [elftools] _parse_build_info: {t_build:.3f}s")
+                logger.debug("[elftools] _parse_build_info: %.3fs", t_build)
                 
                 t0 = time.time()
                 self._build_cu_index()
                 t_cu = time.time() - t0
-                print(f"  [elftools] _build_cu_index: {t_cu:.3f}s ({len(self._cu_cache)} CUs)")
+                logger.debug("[elftools] _build_cu_index: %.3fs (%d CUs)", t_cu, len(self._cu_cache))
                 
                 t0 = time.time()
                 self._build_type_cache()
                 t_type = time.time() - t0
-                print(f"  [elftools] _build_type_cache: {t_type:.3f}s")
+                logger.debug("[elftools] _build_type_cache: %.3fs", t_type)
         
         t_total = time.time() - t_total
-        print(f"  [elftools] Total parser init: {t_total:.3f}s")
+        logger.debug("[elftools] Total parser init: %.3fs", t_total)
     
     def _parse_symbols(self):
         for section in self.elffile.iter_sections():
@@ -1459,5 +1460,3 @@ class ElftoolsParser(ELFParser):
             node.expandable = False
 
 
-from .base import ELFParserFactory
-ELFParserFactory.register('elftools', ElftoolsParser)

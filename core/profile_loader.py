@@ -79,7 +79,11 @@ class ProfileLoader:
                         }
 
     def load_profile(self, profile_name: str) -> Dict[str, Any]:
-        profile_path = os.path.abspath(profile_name)
+        if profile_name in self._profile_cache:
+            cache_entry = self._profile_cache[profile_name]
+            profile_path = cache_entry['path']
+        else:
+            profile_path = os.path.abspath(profile_name)
 
         if not os.path.exists(profile_path):
             raise ProfileError(f"Profile not found: {profile_path}")

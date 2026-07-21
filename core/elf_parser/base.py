@@ -193,14 +193,31 @@ class ELFParserFactory:
 
     Parsers are independent of each other and do not cross-reference.
     If a parser fails to initialize, the factory can fall back to elftools.
+
+    Usage:
+        @ELFParserFactory.register('parser_name')
+        class MyParser(ELFParser):
+            ...
     """
 
     _parsers = {}
 
     @classmethod
-    def register(cls, name: str, parser_class):
-        """Register a parser class with the factory."""
-        cls._parsers[name] = parser_class
+    def register(cls, name: str):
+        """Register a parser class with the factory.
+
+        Can be used as a decorator:
+            @ELFParserFactory.register('parser_name')
+            class MyParser(ELFParser):
+                ...
+
+        Or as a method call:
+            ELFParserFactory.register('parser_name')(MyParser)
+        """
+        def decorator(parser_class):
+            cls._parsers[name] = parser_class
+            return parser_class
+        return decorator
 
     @classmethod
     def create(cls, elf_path: str, parser_type: str = 'elftools') -> ELFParser:
