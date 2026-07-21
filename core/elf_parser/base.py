@@ -140,6 +140,53 @@ class ELFParser(ABC):
                 return member.get('offset', default)
         return default
 
+    @abstractmethod
+    def read_struct_tree(self, struct_type_name: str, address: int, dump_reader, 
+                         max_depth: int = 1) -> Optional[Dict[str, Any]]:
+        """Read struct from memory and return a tree structure for GUI display.
+
+        Designed for tree-view UI where users click to expand nested structs.
+        Only expands up to max_depth to avoid loading large nested structures.
+
+        Args:
+            struct_type_name: Name of the struct type (e.g., 'TX_THREAD').
+            address: Memory address where the struct is located.
+            dump_reader: DumpReader instance for reading memory values.
+            max_depth: Maximum depth to expand (1 = first level only).
+
+        Returns:
+            Tree node dict with the following structure:
+            {
+                'name': str,           # Member or type name
+                'type_name': str,      # DWARF type name
+                'kind': str,           # 'struct', 'union', 'scalar', 'enum', 'ptr_struct', etc.
+                'raw_value': Any,      # Raw numeric value (for scalars/pointers)
+                'display_value': str,  # Human-readable value
+                'address': int,        # Memory address
+                'byte_size': int,      # Size in bytes
+                'expandable': bool,    # Whether this node can be expanded
+                'children': List[Dict] # Child nodes (only populated if expanded)
+            }
+        """
+        pass
+
+    @abstractmethod
+    def read_symbol_tree(self, symbol_name: str, dump_reader, 
+                         max_depth: int = 1) -> Optional[Dict[str, Any]]:
+        """Read a symbol's value as a tree structure for GUI display.
+
+        Combines symbol lookup + type resolution + value reading in one call.
+
+        Args:
+            symbol_name: Name of the symbol to read.
+            dump_reader: DumpReader instance for reading memory values.
+            max_depth: Maximum depth to expand (1 = first level only).
+
+        Returns:
+            Tree node dict with the same structure as read_struct_tree.
+        """
+        pass
+
 
 class ELFParserFactory:
     """Factory for creating ELF parser instances based on configuration.

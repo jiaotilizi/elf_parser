@@ -237,6 +237,12 @@ def dump_symbol(elf_parser, dump_reader, symbol_name: str):
     print(f"  Address: {symbol['address']:#08x}")
     print(f"  Size: {symbol['size']} bytes")
     print(f"  Type: {symbol['type']}")
+
+    # print(symbol)
+    l1 = elf_parser.read_symbol_tree(symbol_name, dump_reader, max_depth=1)
+    print(l1)
+    # l2 = elf_parser.read_symbol_tree(symbol_name, dump_reader, max_depth=2)
+    # print(l2)
     
     if symbol['size'] > 0:
         raw_data = dump_reader.read_memory(symbol['address'], symbol['size'])

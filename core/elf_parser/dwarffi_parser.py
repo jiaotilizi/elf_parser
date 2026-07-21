@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 _ISF_HEADER_FORMAT = '<4sIIIQQQQQQQQQQQQQ'
 _ISF_HEADER_SIZE = struct.calcsize(_ISF_HEADER_FORMAT)
 _ISF_MAGIC = b'ISF\x00'
-_ISF_VERSION = 1
+_ISF_VERSION = 2
 
 # Meta format: arch(1) + bits(1) + endian(1) + padding(1)
 #   arch: 'A'=ARM, '6'=ARM64
@@ -64,7 +64,8 @@ _TYPE_MEMBER_FMT = '<IHII'  # offset(4) + size(2) + name_idx(4) + type_idx(4)
 _TYPE_MEMBER_SIZE = struct.calcsize(_TYPE_MEMBER_FMT)
 
 # Symbol record format (fixed)
-_SYMBOL_RECORD_FMT = '<IQII'  # name_idx(4) + address(8) + size(4) + type_idx(4)
+# kind: 0=scalar, 1=struct/union, 2=array, 3=pointer
+_SYMBOL_RECORD_FMT = '<IQIIBII'  # name_idx(4) + address(8) + size(4) + type_idx(4) + kind(1) + element_type_idx(4) + element_count(4)
 _SYMBOL_RECORD_SIZE = struct.calcsize(_SYMBOL_RECORD_FMT)
 
 # ---------------------------------------------------------------------------
@@ -257,9 +258,13 @@ class DwarffiParser(ELFParser):
         self._types_data_offset = 0
         self._symbols_data_offset = 0
         self._string_pool: Optional[StringPool] = None
+        
+        self._sorted_functions: List[Tuple[int, int, Dict[str, Any]]] = []
+        self._function_addresses: List[int] = []
 
         self._load_or_generate_isf()
         self._parse_elf_segments_and_symbols()
+        self._build_function_index()
 
     def __del__(self):
         if self._mmap is not None:
@@ -323,11 +328,40 @@ class DwarffiParser(ELFParser):
             for sym_name in dffi.symbols:
                 try:
                     sym = dffi.get_symbol(sym_name)
+                    if not sym:
+                        continue
+                    
+                    type_info = sym.type_info
+                    
+                    kind = 0
+                    element_type = ''
+                    element_count = 0
+                    type_name = None
+                    
+                    if type_info:
+                        ti_kind = type_info.get('kind', '')
+                        if ti_kind in ('struct', 'union'):
+                            kind = 1
+                            type_name = type_info.get('name')
+                        elif ti_kind == 'array':
+                            kind = 2
+                            element_type_info = type_info.get('subtype') or type_info.get('element_type')
+                            if element_type_info:
+                                element_type = element_type_info.get('name', '')
+                            element_count = type_info.get('count', 0) or type_info.get('element_count', 0)
+                            type_name = element_type
+                        elif ti_kind.startswith('ptr_'):
+                            kind = 3
+                            type_name = type_info.get('name')
+                    
                     symbols_data.append({
                         'name': sym_name,
                         'address': sym.address,
                         'size': 0,
-                        'type': str(sym.type_info.get('name')) if sym.type_info else None,
+                        'type': type_name if type_name else None,
+                        'kind': kind,
+                        'element_type': element_type,
+                        'element_count': element_count,
                     })
                 except Exception:
                     pass
@@ -351,7 +385,8 @@ class DwarffiParser(ELFParser):
 
             for sym in symbols_data:
                 _intern(sym['name'])
-                _intern(sym.get('type', ''))
+                _intern(str(sym.get('type', '')) if sym.get('type') else '')
+                _intern(sym.get('element_type', ''))
 
             for td_name, td_target in typedefs_data.items():
                 _intern(td_name)
@@ -363,6 +398,9 @@ class DwarffiParser(ELFParser):
                 str_offsets.append(len(str_data))
                 str_data.extend(s.encode('utf-8'))
                 str_data.append(0)
+            
+            if len(str_list) != len(str_offsets):
+                logger.warning(f"String list/offsets mismatch: {len(str_list)} vs {len(str_offsets)}")
 
             # ---- Build type records (fixed format) ----
             type_records: List[Tuple[str, bytes]] = []
@@ -395,9 +433,14 @@ class DwarffiParser(ELFParser):
             symbol_records: List[Tuple[str, bytes]] = []
             for sym in symbols_data:
                 name_idx = _intern(sym['name'])
-                type_idx = _intern(sym.get('type', ''))
+                type_val = sym.get('type')
+                type_idx = _intern(str(type_val) if type_val else '')
+                kind = sym.get('kind', 0)
+                element_type_idx = _intern(sym.get('element_type', ''))
+                element_count = sym.get('element_count', 0)
                 record = struct.pack(_SYMBOL_RECORD_FMT,
-                                     name_idx, sym['address'], sym['size'], type_idx)
+                                     name_idx, sym['address'], sym['size'], 
+                                     type_idx, kind, element_type_idx, element_count)
                 symbol_records.append((sym['name'], record))
 
             # ---- Calculate offsets ----
@@ -704,21 +747,6 @@ class DwarffiParser(ELFParser):
         return self._elf_header_info
 
     def get_symbol_by_name(self, symbol_name: str) -> Optional[Dict[str, Any]]:
-        if self._dffi:
-            try:
-                sym = self._dffi.get_symbol(symbol_name)
-                return {
-                    'name': symbol_name,
-                    'address': sym.address,
-                    'size': 0,
-                    'type': str(sym.type_info.get('name')) if sym.type_info else None,
-                }
-            except Exception:
-                pass
-
-        if symbol_name in self._symbol_cache:
-            return self._symbol_cache[symbol_name]
-
         entry = self._symbols_index.get(symbol_name)
         if entry is not None:
             data_offset, _data_size = entry
@@ -730,7 +758,7 @@ class DwarffiParser(ELFParser):
 
     def _decode_symbol(self, data_offset: int) -> Dict[str, Any]:
         """Decode a single symbol record from ISF fixed binary format."""
-        name_idx, address, size, type_idx = struct.unpack_from(
+        name_idx, address, size, type_idx, kind, element_type_idx, element_count = struct.unpack_from(
             _SYMBOL_RECORD_FMT, self._mmap, data_offset)
         sp = self._string_pool
         cache = sp._cache
@@ -752,11 +780,31 @@ class DwarffiParser(ELFParser):
                 type_str = bytes(sp._pool_mv[off:off + length]).decode('utf-8')
                 cache[type_idx] = type_str
 
+        element_type_str = None
+        if element_type_idx < sp_count:
+            element_type_str = cache[element_type_idx]
+            if element_type_str is None:
+                off = sp._data_offsets[element_type_idx]
+                length = sp._lengths[element_type_idx]
+                element_type_str = bytes(sp._pool_mv[off:off + length]).decode('utf-8')
+                cache[element_type_idx] = element_type_str
+
+        kind_str = ''
+        if kind == 1:
+            kind_str = 'struct'
+        elif kind == 2:
+            kind_str = 'array'
+        elif kind == 3:
+            kind_str = 'pointer'
+
         return {
             'name': name,
             'address': address,
             'size': size,
             'type': type_str,
+            'kind': kind_str,
+            'element_type': element_type_str,
+            'element_count': element_count,
         }
 
     def get_struct_type(self, struct_name: str) -> Optional[Dict[str, Any]]:
@@ -955,6 +1003,20 @@ class DwarffiParser(ELFParser):
         except Exception as e:
             logger.warning(f"Failed to parse ELF segments/symbols: {e}")
 
+    def _build_function_index(self):
+        """Build sorted index for fast function lookup by address."""
+        functions = []
+        for sym in self._symbol_cache.values():
+            if sym.get('type') == 'function':
+                addr = sym.get('address', 0)
+                size = sym.get('size', 0)
+                functions.append((addr, addr + max(size, 1), sym))
+        
+        functions.sort(key=lambda x: x[0])
+        self._sorted_functions = functions
+        self._function_addresses = [f[0] for f in functions]
+        logger.debug(f"Built function index: {len(functions)} functions")
+
     def _find_segment_for_address(self, address: int, size: int = 0) -> Optional[Dict[str, Any]]:
         if not self._sorted_segment_ranges:
             return None
@@ -1057,19 +1119,11 @@ class DwarffiParser(ELFParser):
             )
 
         elif kind == 'struct':
-            # Nested struct
-            nested_type = self.get_struct_type(type_name)
-            if nested_type and dump_reader:
-                nested = self.read_struct_as_node(nested_type, address, dump_reader)
-                if nested:
-                    nested.name = name
-                    return nested
-            # Fallback: treat as bytes
-            raw_value = self._unpack_int(data, min(byte_size, 8), is_32bit)
             return ViewNode(
-                name=name, type_name=type_name, kind='scalar',
-                raw_value=raw_value, display_value=f"0x{raw_value:X}",
+                name=name, type_name=type_name, kind='struct',
                 address=address, byte_size=byte_size,
+                expandable=True,
+                meta={'struct_type_name': type_name},
             )
 
         elif kind == 'string':
@@ -1237,18 +1291,25 @@ class DwarffiParser(ELFParser):
         return self.find_function_by_address(address)
 
     def find_function_by_address(self, address: int) -> Optional[Dict[str, Any]]:
-        """Find the function containing the given address."""
+        """Find the function containing the given address using binary search."""
+        if not self._sorted_functions:
+            return None
+
+        idx = bisect.bisect_right(self._function_addresses, address) - 1
+        
+        if idx < 0:
+            return None
+
         best = None
         best_size = 0
-
-        for sym in self._symbol_cache.values():
-            if sym.get('type') == 'function':
-                sym_addr = sym.get('address', 0)
+        
+        for i in range(max(0, idx - 2), min(len(self._sorted_functions), idx + 3)):
+            start, end, sym = self._sorted_functions[i]
+            if start <= address < end:
                 sym_size = sym.get('size', 0)
-                if sym_addr <= address < sym_addr + max(sym_size, 1):
-                    if sym_size > best_size:
-                        best = sym
-                        best_size = sym_size
+                if sym_size > best_size:
+                    best = sym
+                    best_size = sym_size
 
         if best:
             return {'name': best['name'], 'address': best['address'], 'size': best['size']}
@@ -1288,6 +1349,261 @@ class DwarffiParser(ELFParser):
     def parse_struct_auto(self, var_name: str, dump_reader) -> Optional[Any]:
         """Parse a struct from dump by variable name."""
         return self.create_accessor(var_name, dump_reader)
+
+    def read_struct_tree(self, struct_type_name: str, address: int, dump_reader, 
+                         max_depth: int = 1) -> Optional[Dict[str, Any]]:
+        """Read struct from memory and return a tree structure for GUI display."""
+        struct_type = self.get_struct_type(struct_type_name)
+        if not struct_type:
+            return None
+
+        view_node = self.read_struct_as_node(struct_type, address, dump_reader)
+        if not view_node:
+            return None
+
+        return self._view_node_to_tree(view_node, dump_reader, max_depth, set())
+
+    def read_symbol_tree(self, symbol_name: str, dump_reader, 
+                         max_depth: int = 1) -> Optional[Dict[str, Any]]:
+        """Read a symbol's value as a tree structure for GUI display."""
+        sym = self.get_symbol_by_name(symbol_name)
+        if not sym:
+            return None
+
+        address = sym.get('address', 0)
+        byte_size = sym.get('size', 0)
+
+        kind = sym.get('kind', '')
+        type_name = sym.get('type', '')
+        element_type = sym.get('element_type')
+        element_count = sym.get('element_count', 0)
+
+        if kind in ('struct', 'union'):
+            if type_name:
+                struct_type = self.get_struct_type(type_name)
+                if struct_type:
+                    return self.read_struct_tree(type_name, address, dump_reader, max_depth)
+        
+        elif kind == 'array':
+            if element_type:
+                elem_struct_type = self.get_struct_type(element_type)
+                if elem_struct_type:
+                    elem_size = elem_struct_type.get('byte_size', 0)
+                    if element_count == 0 and byte_size > 0 and elem_size > 0:
+                        element_count = byte_size // elem_size
+                    return self._read_array_tree_from_type(element_type, elem_struct_type, 
+                                                           address, byte_size, element_count, 
+                                                           dump_reader, max_depth)
+        
+        elif kind == 'pointer':
+            if type_name:
+                target_type = type_name.replace('ptr_', '', 1)
+                struct_type = self.get_struct_type(target_type)
+                if struct_type:
+                    raw_value = None
+                    if dump_reader and byte_size > 0:
+                        try:
+                            data = dump_reader.read_memory(address, min(byte_size, 8))
+                            if data:
+                                raw_value = struct.unpack('<I' if byte_size == 4 else '<Q', data)[0]
+                        except Exception:
+                            pass
+                    if raw_value:
+                        return self.read_struct_tree(target_type, raw_value, dump_reader, max_depth)
+            return self._read_scalar_tree(symbol_name, type_name, 'pointer', address, byte_size, dump_reader)
+
+        if type_name:
+            struct_type = self.get_struct_type(type_name)
+            if struct_type:
+                return self.read_struct_tree(type_name, address, dump_reader, max_depth)
+
+        if byte_size > 0 and element_type:
+            elem_struct_type = self.get_struct_type(element_type)
+            if elem_struct_type:
+                elem_size = elem_struct_type.get('byte_size', 0)
+                if elem_size > 0:
+                    if element_count == 0:
+                        element_count = byte_size // elem_size
+                    if element_count > 0:
+                        return self._read_array_tree_from_type(element_type, elem_struct_type, 
+                                                               address, byte_size, element_count, 
+                                                               dump_reader, max_depth)
+
+        return self._read_scalar_tree(symbol_name, type_name, 'scalar', address, byte_size, dump_reader)
+
+    def _read_array_tree_from_type(self, element_type_name: str, element_struct_type: Dict[str, Any],
+                                  address: int, byte_size: int, element_count: int,
+                                  dump_reader, max_depth: int) -> Dict[str, Any]:
+        """Read an array symbol when element type is known from ISF."""
+        element_size = element_struct_type.get('byte_size', 4)
+        
+        children = []
+        for i in range(element_count):
+            elem_addr = address + i * element_size
+            child_tree = self.read_struct_tree(element_type_name, elem_addr, dump_reader, max_depth)
+            if child_tree:
+                children.append(child_tree)
+
+        return {
+            'name': f'{element_type_name}[{element_count}]',
+            'type_name': element_type_name,
+            'kind': 'array',
+            'raw_value': None,
+            'display_value': f'array[{element_count}]',
+            'address': address,
+            'byte_size': byte_size,
+            'expandable': True,
+            'children': children,
+        }
+
+    def _read_array_tree(self, var_type: Dict[str, Any], address: int, byte_size: int, 
+                         dump_reader, max_depth: int) -> Optional[Dict[str, Any]]:
+        """Read an array symbol as a tree structure."""
+        element_type = var_type.get('element_type')
+        if not element_type:
+            return None
+
+        element_count = var_type.get('element_count', 0)
+        if element_count == 0 and byte_size > 0:
+            element_size = element_type.get('byte_size', 4)
+            element_count = byte_size // element_size
+
+        children = []
+        for i in range(element_count):
+            elem_addr = address + i * element_type.get('byte_size', 4)
+            
+            if element_type.get('kind') in ('struct', 'union'):
+                child_tree = self.read_struct_tree(
+                    element_type.get('name', ''), elem_addr, dump_reader, max_depth - 1)
+            else:
+                child_tree = self._read_scalar_tree(
+                    f'[{i}]', element_type.get('name', ''), 
+                    element_type.get('kind', 'scalar'),
+                    elem_addr, element_type.get('byte_size', 4), dump_reader)
+            
+            if child_tree:
+                children.append(child_tree)
+
+        return {
+            'name': var_type.get('name', ''),
+            'type_name': var_type.get('name', ''),
+            'kind': 'array',
+            'raw_value': None,
+            'display_value': f'array[{element_count}]',
+            'address': address,
+            'byte_size': byte_size,
+            'expandable': True,
+            'children': children,
+        }
+
+    def _read_scalar_tree(self, name: str, type_name: str, kind: str, 
+                          address: int, byte_size: int, dump_reader) -> Dict[str, Any]:
+        """Read a scalar/pointer symbol as a tree structure."""
+        raw_value = None
+        display_value = ''
+        
+        if dump_reader and byte_size > 0:
+            try:
+                data = dump_reader.read_memory(address, min(byte_size, 8))
+                if data:
+                    if byte_size == 1:
+                        raw_value = struct.unpack('<B', data)[0]
+                        display_value = f'{raw_value}'
+                    elif byte_size == 2:
+                        raw_value = struct.unpack('<H', data)[0]
+                        display_value = f'{raw_value}'
+                    elif byte_size == 4:
+                        raw_value = struct.unpack('<I', data)[0]
+                        if kind in ('ptr_struct', 'ptr_string', 'ptr_func', 'ptr_scalar'):
+                            display_value = f'0x{raw_value:08X}'
+                        else:
+                            display_value = f'{raw_value}'
+                    elif byte_size == 8:
+                        raw_value = struct.unpack('<Q', data)[0]
+                        if kind in ('ptr_struct', 'ptr_string', 'ptr_func', 'ptr_scalar'):
+                            display_value = f'0x{raw_value:016X}'
+                        else:
+                            display_value = f'{raw_value}'
+            except Exception:
+                pass
+
+        if raw_value is None:
+            display_value = 'N/A'
+
+        return {
+            'name': name,
+            'type_name': type_name,
+            'kind': kind,
+            'raw_value': raw_value,
+            'display_value': display_value,
+            'address': address,
+            'byte_size': byte_size,
+            'expandable': False,
+            'children': [],
+        }
+
+    def _view_node_to_tree(self, node: ViewNode, dump_reader, max_depth: int, 
+                           visited: set) -> Dict[str, Any]:
+        """Convert a ViewNode to a tree dict for GUI display."""
+        visit_key = (node.address, id(node))
+        if visit_key in visited:
+            return {
+                'name': node.name,
+                'type_name': node.type_name,
+                'kind': node.kind,
+                'raw_value': node.raw_value,
+                'display_value': 'circular reference',
+                'address': node.address,
+                'byte_size': node.byte_size,
+                'expandable': False,
+                'children': [],
+            }
+        visited.add(visit_key)
+
+        result = {
+            'name': node.name,
+            'type_name': node.type_name,
+            'kind': node.kind,
+            'raw_value': node.raw_value,
+            'display_value': node.display_value,
+            'address': node.address,
+            'byte_size': node.byte_size,
+            'expandable': node.expandable or (max_depth > 0 and node.kind in ('struct', 'union', 'array')),
+            'children': [],
+        }
+
+        if max_depth > 0 and node.kind in ('struct', 'union'):
+            if node.expandable and not node.children:
+                self._expand_node(node, dump_reader)
+            
+            result['children'] = [
+                self._view_node_to_tree(child, dump_reader, max_depth - 1, visited)
+                for child in node.children
+            ]
+        
+        elif max_depth > 0 and node.kind == 'array':
+            result['children'] = [
+                self._view_node_to_tree(child, dump_reader, max_depth - 1, visited)
+                for child in node.children
+            ]
+
+        visited.discard(visit_key)
+        return result
+
+    def _expand_node(self, node: ViewNode, dump_reader):
+        """Expand a ViewNode by reading its children from memory."""
+        if node.kind not in ('struct', 'union'):
+            return
+        
+        struct_type_name = node.meta.get('struct_type_name') or node.type_name
+        struct_type = self.get_struct_type(struct_type_name)
+        if not struct_type:
+            return
+        
+        view_node = self.read_struct_as_node(struct_type, node.address, dump_reader)
+        if view_node:
+            node.children = view_node.children
+            node.expandable = False
 
     # ------------------------------------------------------------------
     # Helpers

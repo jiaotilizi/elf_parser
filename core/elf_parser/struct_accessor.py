@@ -260,11 +260,35 @@ class StructAccessor:
         for part in parts:
             if current is None or current.kind not in ('struct', 'union'):
                 return None
+            
+            if current.expandable and not current.children:
+                self._expand_struct(current)
+            
             found = current.find_child(part)
             if found is None:
                 return None
             current = found
         return current
+    
+    def _expand_struct(self, node: ViewNode):
+        """Lazily expand a struct node by reading its children from memory."""
+        if not node or node.kind not in ('struct', 'union'):
+            return
+        if node.children:
+            return
+        
+        struct_type_name = node.meta.get('struct_type_name')
+        if not struct_type_name:
+            return
+        
+        struct_type = self._elf_parser.get_struct_type(struct_type_name)
+        if not struct_type:
+            return
+        
+        view_node = self._elf_parser.read_struct_as_node(struct_type, node.address, self._dump_reader)
+        if view_node:
+            node.children = view_node.children
+            node.expandable = False
 
     # ------------------------------------------------------------------
     # Core API

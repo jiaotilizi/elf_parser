@@ -988,7 +988,7 @@ class ElftoolsParser(ELFParser):
                 meta={'element_count': count}
             )
 
-        # 结构体/联合体：逐成员读取
+        # 结构体/联合体：逐成员读取（嵌套结构体延迟加载）
         if kind in ('struct', 'union'):
             type_offset = type_info.get('type_offset')
             visit_key = None
@@ -1002,9 +1002,22 @@ class ElftoolsParser(ELFParser):
             for m in type_info.get('members', []):
                 m_name = m.get('name') or f'<anon@{m.get("offset")}>'
                 m_addr = address + m.get('offset', 0)
-                child_node = self._read_typed_value(m.get('type'), m_addr, dump_reader, depth + 1, _visited)
+                m_type = m.get('type')
+                
+                if m_type and m_type.get('kind') in ('struct', 'union'):
+                    m_type_name = m_type.get('name', '')
+                    child_node = ViewNode(
+                        name=m_name, type_name=m_type_name, kind=m_type['kind'],
+                        address=m_addr, byte_size=m_type.get('byte_size', 0),
+                        expandable=True,
+                        meta={'struct_type_name': m_type_name}
+                    )
+                else:
+                    child_node = self._read_typed_value(m_type, m_addr, dump_reader, depth + 1, _visited)
+                    if child_node:
+                        child_node.name = m_name
+                
                 if child_node:
-                    child_node.name = m_name
                     children.append(child_node)
 
             if visit_key is not None:
@@ -1248,6 +1261,202 @@ class ElftoolsParser(ELFParser):
                 unmatched.append(keyword)
         
         return unmatched
+
+    def read_struct_tree(self, struct_type_name: str, address: int, dump_reader, 
+                         max_depth: int = 1) -> Optional[Dict[str, Any]]:
+        """Read struct from memory and return a tree structure for GUI display."""
+        struct_type = self.get_struct_type(struct_type_name)
+        if not struct_type:
+            return None
+
+        view_node = self.read_struct_as_node(struct_type, address, dump_reader)
+        if not view_node:
+            return None
+
+        return self._view_node_to_tree(view_node, dump_reader, max_depth, set())
+
+    def read_symbol_tree(self, symbol_name: str, dump_reader, 
+                         max_depth: int = 1) -> Optional[Dict[str, Any]]:
+        """Read a symbol's value as a tree structure for GUI display."""
+        sym = self.get_symbol_by_name(symbol_name)
+        if not sym:
+            return None
+
+        address = sym.get('address', 0)
+        byte_size = sym.get('size', 0)
+
+        var_type = self.get_var_type(symbol_name)
+        if var_type:
+            kind = var_type.get('kind', '')
+            type_name = var_type.get('name', '')
+            
+            if kind in ('struct', 'union'):
+                return self.read_struct_tree(type_name, address, dump_reader, max_depth)
+            
+            if kind == 'array':
+                return self._read_array_tree(var_type, address, byte_size, dump_reader, max_depth)
+            
+            return self._read_scalar_tree(symbol_name, type_name, kind, address, byte_size, dump_reader)
+
+        struct_type = self.get_struct_type(symbol_name)
+        if struct_type:
+            return self.read_struct_tree(symbol_name, address, dump_reader, max_depth)
+
+        type_name = sym.get('type', '')
+        struct_type = self.get_struct_type(type_name)
+        if struct_type:
+            return self.read_struct_tree(type_name, address, dump_reader, max_depth)
+
+        return self._read_scalar_tree(symbol_name, type_name, 'scalar', address, byte_size, dump_reader)
+
+    def _read_array_tree(self, var_type: Dict[str, Any], address: int, byte_size: int, 
+                         dump_reader, max_depth: int) -> Optional[Dict[str, Any]]:
+        """Read an array symbol as a tree structure."""
+        element_type = var_type.get('element_type')
+        if not element_type:
+            return None
+
+        element_count = var_type.get('element_count', 0)
+        if element_count == 0 and byte_size > 0:
+            element_size = element_type.get('byte_size', 4)
+            element_count = byte_size // element_size
+
+        children = []
+        for i in range(element_count):
+            elem_addr = address + i * element_type.get('byte_size', 4)
+            
+            if element_type.get('kind') in ('struct', 'union'):
+                child_tree = self.read_struct_tree(
+                    element_type.get('name', ''), elem_addr, dump_reader, max_depth - 1)
+            else:
+                child_tree = self._read_scalar_tree(
+                    f'[{i}]', element_type.get('name', ''), 
+                    element_type.get('kind', 'scalar'),
+                    elem_addr, element_type.get('byte_size', 4), dump_reader)
+            
+            if child_tree:
+                children.append(child_tree)
+
+        return {
+            'name': var_type.get('name', ''),
+            'type_name': var_type.get('name', ''),
+            'kind': 'array',
+            'raw_value': None,
+            'display_value': f'array[{element_count}]',
+            'address': address,
+            'byte_size': byte_size,
+            'expandable': True,
+            'children': children,
+        }
+
+    def _read_scalar_tree(self, name: str, type_name: str, kind: str, 
+                          address: int, byte_size: int, dump_reader) -> Dict[str, Any]:
+        """Read a scalar/pointer symbol as a tree structure."""
+        raw_value = None
+        display_value = ''
+        
+        if dump_reader and byte_size > 0:
+            try:
+                data = dump_reader.read_memory(address, min(byte_size, 8))
+                if data:
+                    if byte_size == 1:
+                        raw_value = struct.unpack('<B', data)[0]
+                        display_value = f'{raw_value}'
+                    elif byte_size == 2:
+                        raw_value = struct.unpack('<H', data)[0]
+                        display_value = f'{raw_value}'
+                    elif byte_size == 4:
+                        raw_value = struct.unpack('<I', data)[0]
+                        if kind in ('ptr_struct', 'ptr_string', 'ptr_func', 'ptr_scalar'):
+                            display_value = f'0x{raw_value:08X}'
+                        else:
+                            display_value = f'{raw_value}'
+                    elif byte_size == 8:
+                        raw_value = struct.unpack('<Q', data)[0]
+                        if kind in ('ptr_struct', 'ptr_string', 'ptr_func', 'ptr_scalar'):
+                            display_value = f'0x{raw_value:016X}'
+                        else:
+                            display_value = f'{raw_value}'
+            except Exception:
+                pass
+
+        if raw_value is None:
+            display_value = 'N/A'
+
+        return {
+            'name': name,
+            'type_name': type_name,
+            'kind': kind,
+            'raw_value': raw_value,
+            'display_value': display_value,
+            'address': address,
+            'byte_size': byte_size,
+            'expandable': False,
+            'children': [],
+        }
+
+    def _view_node_to_tree(self, node, dump_reader, max_depth: int, 
+                           visited: set) -> Dict[str, Any]:
+        """Convert a ViewNode to a tree dict for GUI display."""
+        visit_key = (node.address, id(node))
+        if visit_key in visited:
+            return {
+                'name': node.name,
+                'type_name': node.type_name,
+                'kind': node.kind,
+                'raw_value': node.raw_value,
+                'display_value': 'circular reference',
+                'address': node.address,
+                'byte_size': node.byte_size,
+                'expandable': False,
+                'children': [],
+            }
+        visited.add(visit_key)
+
+        result = {
+            'name': node.name,
+            'type_name': node.type_name,
+            'kind': node.kind,
+            'raw_value': node.raw_value,
+            'display_value': node.display_value,
+            'address': node.address,
+            'byte_size': node.byte_size,
+            'expandable': node.expandable or (max_depth > 0 and node.kind in ('struct', 'union', 'array')),
+            'children': [],
+        }
+
+        if max_depth > 0 and node.kind in ('struct', 'union'):
+            if node.expandable and not node.children:
+                self._expand_node(node, dump_reader)
+            
+            result['children'] = [
+                self._view_node_to_tree(child, dump_reader, max_depth - 1, visited)
+                for child in node.children
+            ]
+        
+        elif max_depth > 0 and node.kind == 'array':
+            result['children'] = [
+                self._view_node_to_tree(child, dump_reader, max_depth - 1, visited)
+                for child in node.children
+            ]
+
+        visited.discard(visit_key)
+        return result
+
+    def _expand_node(self, node, dump_reader):
+        """Expand a ViewNode by reading its children from memory."""
+        if node.kind not in ('struct', 'union'):
+            return
+        
+        struct_type_name = node.meta.get('struct_type_name') or node.type_name
+        struct_type = self.get_struct_type(struct_type_name)
+        if not struct_type:
+            return
+        
+        view_node = self.read_struct_as_node(struct_type, node.address, dump_reader)
+        if view_node:
+            node.children = view_node.children
+            node.expandable = False
 
 
 from .base import ELFParserFactory
