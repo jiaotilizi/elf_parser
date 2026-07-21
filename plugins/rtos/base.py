@@ -23,11 +23,12 @@ SOFTWARE.
 """
 import logging
 from enum import Enum
-from typing import Dict, List, Optional, Any, Callable
+from typing import Dict, List, Optional, Any
 
 from plugins.base import Plugin
 
 logger = logging.getLogger(__name__)
+
 
 class ResourceType(str, Enum):
     TASKS = 'tasks'
@@ -114,100 +115,3 @@ class RTOSPlugin(Plugin):
                 'show_address': True,
             }
         }
-    
-    def _get_elf_parser(self):
-        return self._elf_parser
-    
-    def _get_dump_reader(self):
-        return self._dump_reader
-    
-    def _is_32bit(self) -> bool:
-        return self._elf_parser.is_32bit() if self._elf_parser else True
-    
-    def _read_string(self, addr: int, max_length: int = 32) -> str:
-        if not self._dump_reader or addr <= 0:
-            return ''
-        try:
-            return self._dump_reader.read_string(addr, max_length) or ''
-        except Exception:
-            return ''
-    
-    def _walk_singly_linked_list(self,
-                                symbol_name: str,
-                                struct_name: str,
-                                next_field_name: str,
-                                parse_func: Callable,
-                                context: Dict[str, Any],
-                                next_field_fallback_offset: int = 0) -> List[Dict[str, Any]]:
-        elf_parser = context.get('elf_parser') or self._elf_parser
-        dump_reader = context.get('dump_reader') or self._dump_reader
-
-        if not elf_parser or not dump_reader:
-            logger.warning(f"Missing elf_parser or dump_reader for {symbol_name}")
-            return []
-
-        list_sym = elf_parser.get_symbol_by_name(symbol_name)
-        if not list_sym:
-            logger.warning(f"Symbol not found: {symbol_name}")
-            return []
-
-        list_addr = list_sym['address']
-        is_32bit = elf_parser.is_32bit()
-
-        struct_type = elf_parser.get_struct_type(struct_name)
-        if not struct_type:
-            logger.warning(f"Struct type not found: {struct_name}")
-            return []
-
-        head_ptr = dump_reader.read_pointer(list_addr, is_32bit)
-        if not head_ptr:
-            return []
-
-        from core.elf_parser.struct_accessor import StructAccessor
-
-        visited = set()
-        current_ptr = head_ptr
-        results = []
-
-        while current_ptr and current_ptr not in visited:
-            visited.add(current_ptr)
-
-            view_node = elf_parser.read_struct_as_node(struct_type, current_ptr, dump_reader)
-            if view_node is None:
-                # Robustness: skip bad node, try to read next pointer from raw memory
-                if next_field_fallback_offset > 0:
-                    current_ptr = dump_reader.read_pointer(
-                        current_ptr + next_field_fallback_offset, is_32bit)
-                else:
-                    break
-                continue
-
-            accessor = StructAccessor(view_node, dump_reader, elf_parser)
-            item_info = parse_func(accessor, elf_parser, dump_reader, is_32bit)
-            if item_info:
-                results.append(item_info)
-
-            # Use StructAccessor to get the next pointer — no manual offset calculation
-            current_ptr = accessor.get_pointer(next_field_name)
-
-        return results
-    
-    def _calculate_stack_usage_highest(self,
-                                       stack_start: int,
-                                       stack_size: int,
-                                       stack_highest_ptr: int,
-                                       stack_current: int = 0) -> float:
-        if not stack_start or stack_size <= 0:
-            return 0.0
-
-        if stack_highest_ptr:
-            used = abs(stack_highest_ptr - stack_start)
-        elif stack_current:
-            used = abs(stack_current - stack_start)
-        else:
-            return 0.0
-
-        return used / stack_size * 100 if stack_size > 0 else 0.0
-    
-    def _normalize_resource_type(self, resource_type: str) -> str:
-        return normalize_resource_type(resource_type)

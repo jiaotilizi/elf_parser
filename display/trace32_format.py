@@ -204,7 +204,7 @@ class Trace32Display(DisplayBase):
     def show_stack(self, data: List[Dict]):
         print("\nThreadX.Stack")
         print("=" * 110)
-        print("____________________________name|low______high____|sp__________%|lowest___spare____max_|0___10___20___30___40___50___60___70___80___90__100|")
+        print("____________________________name|low______high____|sp__________%|lowest___spare____max_|0____10____20____30____40____50____60____70____80____90____100|")
         
         for item in data:
             name = item.get('name', '')[:30].rjust(30)
@@ -235,11 +235,21 @@ class Trace32Display(DisplayBase):
             
             progress_bar = ''
             usage_int = int(usage)
-            for i in range(0, 101, 10):
-                if usage_int >= i:
-                    progress_bar += '#'
+            segments = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+            char_counts = [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5]
+            
+            for i in range(len(segments) - 1):
+                start = segments[i]
+                end = segments[i + 1]
+                count = char_counts[i]
+                if usage_int >= end:
+                    progress_bar += '#' * count
+                elif usage_int >= start:
+                    ratio = (usage_int - start) / (end - start)
+                    filled = int(ratio * count)
+                    progress_bar += '#' * filled + '-' * (count - filled)
                 else:
-                    progress_bar += '-'
+                    progress_bar += '-' * count
             
             print(f"{name}|{low:08X} {high:08X}|{sp:08X} {usage:>4.1f}%|{lowest:08X} {spare:08X} {usage_int:>3}%|{progress_bar}|")
 

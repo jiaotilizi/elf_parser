@@ -150,6 +150,19 @@ class DataAdapter:
                 {'name': 'line_number', 'label': 'Line', 'type': 'number'},
             ]
         ),
+        'stack': ResourceMetadata(
+            resource_type='stack',
+            label='Stack',
+            icon='[Stack]',
+            primary_key='address',
+            fields=[
+                {'name': 'name', 'label': 'Name', 'type': 'string'},
+                {'name': 'stack_start', 'label': 'Low', 'type': 'hex'},
+                {'name': 'stack_end', 'label': 'High', 'type': 'hex'},
+                {'name': 'stack_current', 'label': 'SP', 'type': 'hex'},
+                {'name': 'stack_usage', 'label': 'Usage %', 'type': 'number'},
+            ]
+        ),
         'trace_buffer': ResourceMetadata(
             resource_type='trace_buffer',
             label='Trace Buffer',

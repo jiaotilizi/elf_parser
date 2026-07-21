@@ -25,15 +25,14 @@ import logging
 import time
 from typing import Dict, List, Optional, Any
 
-from ..base import RTOSPlugin
+from ..base import RTOSPlugin, normalize_resource_type
+from core.utils.linked_list import walk_singly_linked_list
+from core.utils.stack import calculate_stack_usage_highest
 
 logger = logging.getLogger(__name__)
 
-# ThreadX 信号量最大计数值（ThreadX 计数信号量无固定上限）
 _TX_SEMAPHORE_MAX_COUNT = 0xFFFFFFFF
 
-# ThreadX 线程状态映射表（tx_thread_state → 名称）
-# 来源：OpenOCD ThreadX.c 源码 + ThreadX tx_api.h 枚举定义
 _THREAD_STATE_MAP = {
     0: 'TX_READY',
     1: 'TX_COMPLETED',
@@ -63,7 +62,7 @@ class ThreadXV6Plugin(RTOSPlugin):
         )
     
     def get_resource_types(self) -> List[str]:
-        return ['tasks', 'semaphores', 'mutexes', 'queues', 'events', 'timers', 'block_pools', 'byte_pools']
+        return ['tasks', 'semaphores', 'mutexes', 'queues', 'events', 'timers', 'block_pools', 'byte_pools', 'stack']
     
     def get_resource(self, resource_type: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         resource_map = {
@@ -75,6 +74,7 @@ class ThreadXV6Plugin(RTOSPlugin):
             'timers': self._get_timers,
             'block_pools': self._get_block_pools,
             'byte_pools': self._get_byte_pools,
+            'stack': self._get_stack,
         }
         func = resource_map.get(resource_type)
         if func:
@@ -108,55 +108,64 @@ class ThreadXV6Plugin(RTOSPlugin):
         ]
     
     def _get_tasks(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        tasks = self._walk_singly_linked_list(
-            '_tx_thread_created_ptr',
-            'TX_THREAD',
-            'tx_thread_created_next',
-            self._parse_thread,
-            context
-        )
-        
         elf_parser = context['elf_parser']
         dump_reader = context['dump_reader']
-        ptr_size = 4 if elf_parser.is_32bit() else 8
         
-        current_ptr_sym = elf_parser.get_symbol_by_name('_tx_thread_current_ptr')
-        if current_ptr_sym:
-            current_ptr_value = dump_reader.read_pointer_by_size(current_ptr_sym['address'], byte_size=ptr_size)
-            if current_ptr_value == 0:
-                ready_list_sym = elf_parser.get_symbol_by_name('_tx_thread_priority_list')
-                if ready_list_sym:
-                    ready_list_addr = ready_list_sym['address']
-                    priority_list_size = ready_list_sym.get('size', 0)
-                    if priority_list_size > 0:
-                        max_priorities = priority_list_size // ptr_size
-                    else:
-                        max_priorities = 0
-                    for priority in range(max_priorities):
-                        head_addr = ready_list_addr + priority * ptr_size
-                        head = dump_reader.read_pointer_by_size(head_addr, byte_size=ptr_size)
-                        if head != 0:
-                            for task in tasks:
-                                if task['address'] == head:
-                                    task['state'] = 0
-                                    task['state_name'] = 'TX_READY'
-                                    break
-                            break
+        thread_struct = elf_parser.get_struct_type('TX_THREAD')
+        if not thread_struct:
+            logger.warning("TX_THREAD struct type not found")
+            return []
         
+        list_sym = elf_parser.get_symbol_by_name('_tx_thread_created_ptr')
+        if not list_sym:
+            logger.warning("_tx_thread_created_ptr symbol not found")
+            return []
+        
+        head_addr = dump_reader.read_pointer(list_sym['address'], elf_parser.is_32bit())
+        if not head_addr:
+            return []
+        
+        tasks = []
+        for accessor in walk_singly_linked_list(
+            elf_parser, dump_reader, thread_struct, head_addr, 'tx_thread_created_next'
+        ):
+            task_info = self._parse_thread(accessor, elf_parser, dump_reader, elf_parser.is_32bit())
+            if task_info:
+                tasks.append(task_info)
+        
+        self._update_current_task(context, tasks)
         self._calculate_cpu_usage(tasks)
         
         return tasks
     
-    def _calculate_cpu_usage(self, tasks: List[Dict[str, Any]]):
-        """Calculate schedule ratio for each task based on run_count.
+    def _update_current_task(self, context: Dict[str, Any], tasks: List[Dict[str, Any]]) -> None:
+        elf_parser = context['elf_parser']
+        dump_reader = context['dump_reader']
+        ptr_size = 4 if elf_parser.is_32bit() else 8
 
-        IMPORTANT: ThreadX tx_thread_run_count records only the number of
-        times a thread has been scheduled, NOT cumulative execution time.
-        This field is labeled 'schedule_ratio' (not 'cpu_usage') to reflect
-        that it measures scheduling frequency, not actual CPU time.
-        In systems with unequal time slices or interrupt preemption,
-        this metric may diverge significantly from true CPU utilization.
-        """
+        task_by_addr = {t['address']: t for t in tasks}
+
+        current_sym = elf_parser.get_symbol_by_name('_tx_thread_current_ptr')
+        if current_sym:
+            cur = dump_reader.read_pointer_by_size(current_sym['address'], byte_size=ptr_size)
+            if cur and cur in task_by_addr:
+                task_by_addr[cur]['state'] = 0
+                task_by_addr[cur]['state_name'] = 'TX_READY'
+                return
+
+        ready_sym = elf_parser.get_symbol_by_name('_tx_thread_priority_list')
+        if not ready_sym:
+            return
+        ready_addr = ready_sym['address']
+        max_prio = ready_sym.get('size', 0) // ptr_size
+        for i in range(max_prio):
+            head = dump_reader.read_pointer_by_size(ready_addr + i * ptr_size, byte_size=ptr_size)
+            if head and head in task_by_addr:
+                task_by_addr[head]['state'] = 0
+                task_by_addr[head]['state_name'] = 'TX_READY'
+                return
+    
+    def _calculate_cpu_usage(self, tasks: List[Dict[str, Any]]):
         total_run_count = sum(task.get('run_count', 0) for task in tasks)
         
         if total_run_count > 0:
@@ -169,23 +178,23 @@ class ThreadXV6Plugin(RTOSPlugin):
     
     def _parse_thread(self, accessor, elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
         thread_addr = accessor.address
-
-        state = accessor.get_int('tx_thread_state')
+        stack_current = accessor.get_ptr('tx_thread_stack_ptr')
         stack_start = accessor.get_ptr('tx_thread_stack_start')
-        stack_size = accessor.get_int('tx_thread_stack_size')
+        stack_end = accessor.get_ptr('tx_thread_stack_end')
+        stack_highest_ptr = accessor.get_ptr('tx_thread_stack_highest_ptr')
+        
         result = {
             'address': thread_addr,
             'magic': thread_addr,
             'name': accessor.get_string('tx_thread_name'),
-            'state': state,
+            'state': accessor.get_int('tx_thread_state'),
             'priority': accessor.get_int('tx_thread_priority'),
             'run_count': accessor.get_int('tx_thread_run_count'),
+            'stack_current': stack_current,
             'stack_start': stack_start,
-            'stack_end': stack_start + stack_size if stack_start and stack_size else 0,
-            'stack_size': stack_size,
-            'stack_current': accessor.get_ptr('tx_thread_stack_ptr'),
-            'stack_high_water': 0,
-            'current_pc': 0,
+            'stack_end': stack_end,
+            'stack_size': accessor.get_int('tx_thread_stack_size'),
+            'stack_highest_ptr': stack_highest_ptr,
             'entry_point': accessor.get_ptr('tx_thread_entry'),
             'entry_param': accessor.get_ptr('tx_thread_entry_parameter'),
             'timer_remaining': accessor.get_int('tx_thread_time_slice'),
@@ -194,11 +203,9 @@ class ThreadXV6Plugin(RTOSPlugin):
             'state_name': accessor.get_enum_name('tx_thread_state', fallback_map=_THREAD_STATE_MAP),
         }
 
-        stack_highest_ptr = accessor.get_ptr('tx_thread_stack_highest_ptr')
-        result['stack_highest_ptr'] = stack_highest_ptr
-        stack_usage = self._calculate_stack_usage_highest(
-            result['stack_start'],
-            result['stack_size'],
+        stack_usage = calculate_stack_usage_highest(
+            stack_start,
+            stack_end,
             stack_highest_ptr,
             result['stack_current']
         )
@@ -212,13 +219,31 @@ class ThreadXV6Plugin(RTOSPlugin):
         return result
     
     def _get_semaphores(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return self._walk_singly_linked_list(
-            '_tx_semaphore_created_ptr',
-            'TX_SEMAPHORE',
-            'tx_semaphore_created_next',
-            self._parse_semaphore,
-            context
-        )
+        elf_parser = context['elf_parser']
+        dump_reader = context['dump_reader']
+        
+        struct_type = elf_parser.get_struct_type('TX_SEMAPHORE')
+        if not struct_type:
+            logger.warning("TX_SEMAPHORE struct type not found")
+            return []
+        
+        list_sym = elf_parser.get_symbol_by_name('_tx_semaphore_created_ptr')
+        if not list_sym:
+            logger.warning("_tx_semaphore_created_ptr symbol not found")
+            return []
+        
+        head_addr = dump_reader.read_pointer(list_sym['address'], elf_parser.is_32bit())
+        if not head_addr:
+            return []
+        
+        results = []
+        for accessor in walk_singly_linked_list(
+            elf_parser, dump_reader, struct_type, head_addr, 'tx_semaphore_created_next'
+        ):
+            item_info = self._parse_semaphore(accessor, elf_parser, dump_reader, elf_parser.is_32bit())
+            if item_info:
+                results.append(item_info)
+        return results
     
     def _parse_semaphore(self, accessor, elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
         sem_addr = accessor.address
@@ -227,18 +252,36 @@ class ThreadXV6Plugin(RTOSPlugin):
             'magic': sem_addr,
             'name': accessor.get_string('tx_semaphore_name'),
             'count': accessor.get_int('tx_semaphore_count'),
-            'max_count': _TX_SEMAPHORE_MAX_COUNT,
+            'max_count': accessor.get_int('tx_semaphore_max_count'),
             'suspended_count': accessor.get_int('tx_semaphore_suspended_count'),
         }
     
     def _get_mutexes(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return self._walk_singly_linked_list(
-            '_tx_mutex_created_ptr',
-            'TX_MUTEX',
-            'tx_mutex_created_next',
-            self._parse_mutex,
-            context
-        )
+        elf_parser = context['elf_parser']
+        dump_reader = context['dump_reader']
+        
+        struct_type = elf_parser.get_struct_type('TX_MUTEX')
+        if not struct_type:
+            logger.warning("TX_MUTEX struct type not found")
+            return []
+        
+        list_sym = elf_parser.get_symbol_by_name('_tx_mutex_created_ptr')
+        if not list_sym:
+            logger.warning("_tx_mutex_created_ptr symbol not found")
+            return []
+        
+        head_addr = dump_reader.read_pointer(list_sym['address'], elf_parser.is_32bit())
+        if not head_addr:
+            return []
+        
+        results = []
+        for accessor in walk_singly_linked_list(
+            elf_parser, dump_reader, struct_type, head_addr, 'tx_mutex_created_next'
+        ):
+            item_info = self._parse_mutex(accessor, elf_parser, dump_reader, elf_parser.is_32bit())
+            if item_info:
+                results.append(item_info)
+        return results
     
     def _parse_mutex(self, accessor, elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
         mutex_addr = accessor.address
@@ -255,33 +298,56 @@ class ThreadXV6Plugin(RTOSPlugin):
         }
 
         if owner != 0 and elf_parser:
-            try:
-                thread_struct = elf_parser.get_struct_type('TX_THREAD')
-                if thread_struct:
-                    thread_view = elf_parser.read_struct_as_node(thread_struct, owner, dump_reader)
-                    if thread_view:
-                        from core.elf_parser.struct_accessor import StructAccessor
-                        owner_accessor = StructAccessor(thread_view, dump_reader, elf_parser)
-                        owner_info = self._parse_thread(owner_accessor, elf_parser, dump_reader, is_32bit)
-                        if owner_info:
-                            result['owner_info'] = {
-                                'address': owner_info['address'],
-                                'name': owner_info['name'],
-                            }
-            except Exception:
-                logger.debug("Failed to parse mutex owner at 0x%x for mutex 0x%x",
-                             owner, mutex_addr, exc_info=True)
+            owner_info = self._safe_read_thread(owner, elf_parser, dump_reader, is_32bit)
+            if owner_info:
+                result['owner_info'] = {
+                    'address': owner_info['address'],
+                    'name': owner_info['name'],
+                }
 
         return result
     
+    def _safe_read_thread(self, thread_addr: int, elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
+        try:
+            thread_struct = elf_parser.get_struct_type('TX_THREAD')
+            if not thread_struct:
+                return None
+            thread_view = elf_parser.read_struct_as_node(thread_struct, thread_addr, dump_reader)
+            if not thread_view:
+                return None
+            from core.elf_parser.struct_accessor import StructAccessor
+            owner_accessor = StructAccessor(thread_view, dump_reader, elf_parser)
+            return self._parse_thread(owner_accessor, elf_parser, dump_reader, is_32bit)
+        except Exception as e:
+            logger.debug("Failed to read thread at 0x%x: %s", thread_addr, e)
+            return None
+    
     def _get_queues(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return self._walk_singly_linked_list(
-            '_tx_queue_created_ptr',
-            'TX_QUEUE',
-            'tx_queue_created_next',
-            self._parse_queue,
-            context
-        )
+        elf_parser = context['elf_parser']
+        dump_reader = context['dump_reader']
+        
+        struct_type = elf_parser.get_struct_type('TX_QUEUE')
+        if not struct_type:
+            logger.warning("TX_QUEUE struct type not found")
+            return []
+        
+        list_sym = elf_parser.get_symbol_by_name('_tx_queue_created_ptr')
+        if not list_sym:
+            logger.warning("_tx_queue_created_ptr symbol not found")
+            return []
+        
+        head_addr = dump_reader.read_pointer(list_sym['address'], elf_parser.is_32bit())
+        if not head_addr:
+            return []
+        
+        results = []
+        for accessor in walk_singly_linked_list(
+            elf_parser, dump_reader, struct_type, head_addr, 'tx_queue_created_next'
+        ):
+            item_info = self._parse_queue(accessor, elf_parser, dump_reader, elf_parser.is_32bit())
+            if item_info:
+                results.append(item_info)
+        return results
     
     def _parse_queue(self, accessor, elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
         queue_addr = accessor.address
@@ -296,13 +362,31 @@ class ThreadXV6Plugin(RTOSPlugin):
         }
     
     def _get_events(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return self._walk_singly_linked_list(
-            '_tx_event_flags_created_ptr',
-            'TX_EVENT_FLAGS_GROUP',
-            'tx_event_flags_group_created_next',
-            self._parse_event,
-            context
-        )
+        elf_parser = context['elf_parser']
+        dump_reader = context['dump_reader']
+        
+        struct_type = elf_parser.get_struct_type('TX_EVENT_FLAGS_GROUP')
+        if not struct_type:
+            logger.warning("TX_EVENT_FLAGS_GROUP struct type not found")
+            return []
+        
+        list_sym = elf_parser.get_symbol_by_name('_tx_event_flags_created_ptr')
+        if not list_sym:
+            logger.warning("_tx_event_flags_created_ptr symbol not found")
+            return []
+        
+        head_addr = dump_reader.read_pointer(list_sym['address'], elf_parser.is_32bit())
+        if not head_addr:
+            return []
+        
+        results = []
+        for accessor in walk_singly_linked_list(
+            elf_parser, dump_reader, struct_type, head_addr, 'tx_event_flags_group_created_next'
+        ):
+            item_info = self._parse_event(accessor, elf_parser, dump_reader, elf_parser.is_32bit())
+            if item_info:
+                results.append(item_info)
+        return results
     
     def _parse_event(self, accessor, elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
         event_addr = accessor.address
@@ -315,13 +399,31 @@ class ThreadXV6Plugin(RTOSPlugin):
         }
     
     def _get_timers(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return self._walk_singly_linked_list(
-            '_tx_timer_created_ptr',
-            'TX_TIMER',
-            'tx_timer_created_next',
-            self._parse_timer,
-            context
-        )
+        elf_parser = context['elf_parser']
+        dump_reader = context['dump_reader']
+        
+        struct_type = elf_parser.get_struct_type('TX_TIMER')
+        if not struct_type:
+            logger.warning("TX_TIMER struct type not found")
+            return []
+        
+        list_sym = elf_parser.get_symbol_by_name('_tx_timer_created_ptr')
+        if not list_sym:
+            logger.warning("_tx_timer_created_ptr symbol not found")
+            return []
+        
+        head_addr = dump_reader.read_pointer(list_sym['address'], elf_parser.is_32bit())
+        if not head_addr:
+            return []
+        
+        results = []
+        for accessor in walk_singly_linked_list(
+            elf_parser, dump_reader, struct_type, head_addr, 'tx_timer_created_next'
+        ):
+            item_info = self._parse_timer(accessor, elf_parser, dump_reader, elf_parser.is_32bit())
+            if item_info:
+                results.append(item_info)
+        return results
     
     def _parse_timer(self, accessor, elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
         timer_addr = accessor.address
@@ -337,7 +439,6 @@ class ThreadXV6Plugin(RTOSPlugin):
             'expiration_param': 0,
         }
 
-        # 使用点分路径访问嵌套结构体 TX_TIMER_INTERNAL
         result['ticks_remaining'] = accessor.get_int('tx_timer_internal.tx_timer_internal_remaining_ticks')
         result['period_ticks'] = accessor.get_int('tx_timer_internal.tx_timer_internal_re_initialize_ticks')
         result['expiration_function'] = accessor.get_ptr('tx_timer_internal.tx_timer_internal_timeout_function')
@@ -355,13 +456,31 @@ class ThreadXV6Plugin(RTOSPlugin):
         return result
     
     def _get_block_pools(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return self._walk_singly_linked_list(
-            '_tx_block_pool_created_ptr',
-            'TX_BLOCK_POOL',
-            'tx_block_pool_created_next',
-            self._parse_block_pool,
-            context
-        )
+        elf_parser = context['elf_parser']
+        dump_reader = context['dump_reader']
+        
+        struct_type = elf_parser.get_struct_type('TX_BLOCK_POOL')
+        if not struct_type:
+            logger.warning("TX_BLOCK_POOL struct type not found")
+            return []
+        
+        list_sym = elf_parser.get_symbol_by_name('_tx_block_pool_created_ptr')
+        if not list_sym:
+            logger.warning("_tx_block_pool_created_ptr symbol not found")
+            return []
+        
+        head_addr = dump_reader.read_pointer(list_sym['address'], elf_parser.is_32bit())
+        if not head_addr:
+            return []
+        
+        results = []
+        for accessor in walk_singly_linked_list(
+            elf_parser, dump_reader, struct_type, head_addr, 'tx_block_pool_created_next'
+        ):
+            item_info = self._parse_block_pool(accessor, elf_parser, dump_reader, elf_parser.is_32bit())
+            if item_info:
+                results.append(item_info)
+        return results
     
     def _parse_block_pool(self, accessor, elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
         pool_addr = accessor.address
@@ -375,13 +494,31 @@ class ThreadXV6Plugin(RTOSPlugin):
         }
     
     def _get_byte_pools(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        return self._walk_singly_linked_list(
-            '_tx_byte_pool_created_ptr',
-            'TX_BYTE_POOL',
-            'tx_byte_pool_created_next',
-            self._parse_byte_pool,
-            context
-        )
+        elf_parser = context['elf_parser']
+        dump_reader = context['dump_reader']
+        
+        struct_type = elf_parser.get_struct_type('TX_BYTE_POOL')
+        if not struct_type:
+            logger.warning("TX_BYTE_POOL struct type not found")
+            return []
+        
+        list_sym = elf_parser.get_symbol_by_name('_tx_byte_pool_created_ptr')
+        if not list_sym:
+            logger.warning("_tx_byte_pool_created_ptr symbol not found")
+            return []
+        
+        head_addr = dump_reader.read_pointer(list_sym['address'], elf_parser.is_32bit())
+        if not head_addr:
+            return []
+        
+        results = []
+        for accessor in walk_singly_linked_list(
+            elf_parser, dump_reader, struct_type, head_addr, 'tx_byte_pool_created_next'
+        ):
+            item_info = self._parse_byte_pool(accessor, elf_parser, dump_reader, elf_parser.is_32bit())
+            if item_info:
+                results.append(item_info)
+        return results
     
     def _parse_byte_pool(self, accessor, elf_parser, dump_reader, is_32bit: bool) -> Optional[Dict[str, Any]]:
         pool_addr = accessor.address
@@ -401,6 +538,14 @@ class ThreadXV6Plugin(RTOSPlugin):
             result['usage_percent'] = (total_bytes - available_bytes) / total_bytes * 100
 
         return result
+    
+    def _get_stack(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        tasks = context.get('_cached_tasks')
+        if tasks is None:
+            tasks = self._get_tasks(context)
+        for t in tasks:
+            t.setdefault('stack_usage', 0.0)
+        return tasks
     
     def get_heap_info(self, context: Dict[str, Any]) -> Dict[str, Any]:
         elf_parser = context.get('elf_parser')
@@ -446,7 +591,7 @@ class ThreadXV6Plugin(RTOSPlugin):
         if not self._context:
             return None
         
-        resource_type = self._normalize_resource_type(resource_type)
+        resource_type = normalize_resource_type(resource_type)
         resources = self.get_resource(resource_type, self._context)
         
         for resource in resources:
@@ -462,16 +607,19 @@ class ThreadXV6Plugin(RTOSPlugin):
         for key, func in [('tasks', self._get_tasks), ('semaphores', self._get_semaphores),
                           ('mutexes', self._get_mutexes), ('queues', self._get_queues),
                           ('events', self._get_events), ('timers', self._get_timers),
-                          ('block_pools', self._get_block_pools), ('byte_pools', self._get_byte_pools)]:
+                          ('block_pools', self._get_block_pools), ('byte_pools', self._get_byte_pools),
+                          ('stack', self._get_stack)]:
             t0 = time.time()
             result[key] = func(context)
+            if key == 'tasks':
+                context['_cached_tasks'] = result[key]
             elapsed = time.time() - t0
             count = len(result[key]) if isinstance(result[key], list) else 0
-            print(f"    {key}: {elapsed:.3f}s ({count} items)")
+            logger.info("%s: %.3fs (%d items)", key, elapsed, count)
         
         t0 = time.time()
         result['heap'] = self.get_heap_info(context)
         elapsed = time.time() - t0
-        print(f"    heap: {elapsed:.3f}s")
+        logger.info("heap: %.3fs", elapsed)
         
         return result

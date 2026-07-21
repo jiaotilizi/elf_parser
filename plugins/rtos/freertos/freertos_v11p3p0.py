@@ -22,30 +22,15 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 import logging
-from typing import Dict, List, Optional, Any, Callable
+from typing import Dict, List, Optional, Any
 
 from ..base import RTOSPlugin
+from core.utils.linked_list import walk_doubly_linked_list
+from core.utils.stack import calculate_stack_usage
 
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# FreeRTOS v11 内核常量（基于源码中结构体固定布局）
-# 这些值源于 FreeRTOS 内核源码中的结构体定义，不是任意魔术值。
-# 当 DWARF 类型信息可用时，优先使用 DWARF 推导的偏移量；
-# 这些常量仅作为 DWARF 缺失时的回退。
-# ============================================================================
-
-# pxTopOfStack 中 PC 的偏移量（Cortex-M 异常栈帧中 PC 的位置）
-# 注意：此偏移量是架构相关的，不是通用值
-# Cortex-M 硬件自动压栈顺序：xPSR, PC, LR, R12, R3, R2, R1, R0
-# pxTopOfStack 指向栈顶（最低地址），即 xPSR 的位置
-# PC 在 xPSR 之后，偏移为 4
 _FREERTOS_PC_OFFSET_IN_STACK_FRAME = 4
-
-# MiniListItem_t 中 pxNext 的偏移量（MiniListItem_t 只有 xItemValue 和 pxNext 两个字段）
-#   TickType_t xItemValue;  // offset 0
-#   ListItem_t *pxNext;     // offset 4
-_FREERTOS_LIST_ITEM_PX_NEXT_OFFSET = 4
 
 
 class FreeRTOSV11Plugin(RTOSPlugin):
@@ -136,119 +121,7 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         
         return handles
     
-    # ========================================================================
-    # FreeRTOS 专用双向链表遍历（从 base.py 下沉）
-    # ========================================================================
     
-    def _walk_doubly_linked_list(self,
-                                list_addr: int,
-                                struct_type: Dict[str, Any],
-                                list_struct_type: Dict[str, Any],
-                                item_to_struct_offset: int,
-                                parse_func: Callable,
-                                context: Dict[str, Any],
-                                max_nodes: int = 0) -> List[Dict[str, Any]]:
-        """遍历 FreeRTOS List_t 双向链表。
-        
-        FreeRTOS List_t 中 xListEnd 是哨兵节点（offset 8），
-        pxIndex（offset 4）是 round-robin 调度提示，不是链表头。
-        正确遍历从 xListEnd.pxNext 开始。
-        
-        Args:
-            max_nodes: 最大遍历节点数上限，0 表示不限制。
-                       建议设为 uxNumberOfItems * 2 作为防御性校验。
-        """
-        elf_parser = context.get('elf_parser')
-        dump_reader = context.get('dump_reader')
-        
-        if not elf_parser or not dump_reader:
-            return []
-        
-        is_32bit = elf_parser.is_32bit()
-        
-        if not list_struct_type:
-            logger.warning("List_t struct type not found")
-            return []
-        
-        xlist_end_offset = elf_parser.get_member_offset('List_t', 'xListEnd', 8)
-        xlist_end_addr = list_addr + xlist_end_offset
-        
-        # 从 xListEnd.pxNext 开始
-        pxnext_offset = elf_parser.get_member_offset('ListItem_t', 'pxNext', _FREERTOS_LIST_ITEM_PX_NEXT_OFFSET)
-        first_item_addr = dump_reader.read_pointer(xlist_end_addr + pxnext_offset, is_32bit)
-        if not first_item_addr:
-            return []
-        
-        if first_item_addr == xlist_end_addr:
-            return []
-        
-        from core.elf_parser.struct_accessor import StructAccessor
-        
-        current_ptr = first_item_addr
-        visited = set()
-        results = []
-        node_count = 0
-        
-        while current_ptr and current_ptr not in visited:
-            # 防御性校验：最大节点数上限
-            if max_nodes > 0 and node_count >= max_nodes:
-                logger.warning("_walk_doubly_linked_list: reached max_nodes=%d, stopping traversal", max_nodes)
-                break
-            
-            visited.add(current_ptr)
-            node_count += 1
-            
-            if current_ptr == xlist_end_addr:
-                break
-            
-            struct_addr = current_ptr - item_to_struct_offset
-            if struct_addr <= 0:
-                break
-            
-            # 地址有效性检查：验证 struct_addr 在 dump 的内存区域内
-            if dump_reader.get_memory_region(struct_addr) is None:
-                logger.debug("_walk_doubly_linked_list: invalid struct_addr 0x%x, stopping", struct_addr)
-                break
-            
-            view_node = elf_parser.read_struct_as_node(struct_type, struct_addr, dump_reader)
-            if view_node:
-                accessor = StructAccessor(view_node, dump_reader, elf_parser)
-                item_info = parse_func(accessor, elf_parser, dump_reader, is_32bit)
-                if item_info:
-                    results.append(item_info)
-            
-            next_ptr = dump_reader.read_pointer(current_ptr + pxnext_offset, is_32bit)
-            if not next_ptr or next_ptr == 0:
-                break
-            current_ptr = next_ptr
-        
-        return results
-    
-    def _calculate_stack_usage(self,
-                              stack_start: int,
-                              stack_end: int,
-                              current_sp: int,
-                              stack_size: int = 0) -> float:
-        """计算 FreeRTOS 任务栈使用率（栈向下增长）。
-        
-        FreeRTOS 在 ARM 上栈向下增长，pxStack 指向栈底（高地址），
-        pxEndOfStack 指向栈顶（低地址），pxTopOfStack 指向当前栈顶。
-        """
-        if not stack_start or not stack_end:
-            return 0.0
-        
-        if stack_size <= 0:
-            stack_size = abs(stack_start - stack_end)
-        
-        if stack_size <= 0:
-            return 0.0
-        
-        if current_sp:
-            used = abs(current_sp - min(stack_start, stack_end))
-        else:
-            return 0.0
-        
-        return used / stack_size * 100 if stack_size > 0 else 0.0
     
     def _get_config_max_priorities(self, elf_parser) -> int:
         """从 pxReadyTasksLists 的 ELF 符号大小推导 configMAX_PRIORITIES。
@@ -419,48 +292,44 @@ class FreeRTOSV11Plugin(RTOSPlugin):
             if ux_number_of_items == 0 or ux_number_of_items is None:
                 continue
             
-            tasks.extend(self._walk_doubly_linked_list(
-                list_addr,
-                tcb_struct,
-                list_struct,
-                state_list_item_offset,
-                self._parse_tcb_with_context,
-                context,
+            for accessor in walk_doubly_linked_list(
+                elf_parser, dump_reader, list_struct, tcb_struct,
+                list_addr, 'pxNext', 'pxPrevious', state_list_item_offset,
                 max_nodes=ux_number_of_items * 2
-            ))
+            ):
+                task_info = self._parse_tcb_with_context(accessor, elf_parser, dump_reader, is_32bit)
+                if task_info:
+                    tasks.append(task_info)
         
         suspended_list_sym = elf_parser.get_symbol_by_name('xSuspendedTaskList')
         if suspended_list_sym:
-            tasks.extend(self._walk_doubly_linked_list(
-                suspended_list_sym['address'],
-                tcb_struct,
-                list_struct,
-                state_list_item_offset,
-                self._parse_tcb_with_context,
-                context
-            ))
+            for accessor in walk_doubly_linked_list(
+                elf_parser, dump_reader, list_struct, tcb_struct,
+                suspended_list_sym['address'], 'pxNext', 'pxPrevious', state_list_item_offset
+            ):
+                task_info = self._parse_tcb_with_context(accessor, elf_parser, dump_reader, is_32bit)
+                if task_info:
+                    tasks.append(task_info)
         
         delayed_list1_sym = elf_parser.get_symbol_by_name('xDelayedTaskList1')
         if delayed_list1_sym:
-            tasks.extend(self._walk_doubly_linked_list(
-                delayed_list1_sym['address'],
-                tcb_struct,
-                list_struct,
-                state_list_item_offset,
-                self._parse_tcb_with_context,
-                context
-            ))
+            for accessor in walk_doubly_linked_list(
+                elf_parser, dump_reader, list_struct, tcb_struct,
+                delayed_list1_sym['address'], 'pxNext', 'pxPrevious', state_list_item_offset
+            ):
+                task_info = self._parse_tcb_with_context(accessor, elf_parser, dump_reader, is_32bit)
+                if task_info:
+                    tasks.append(task_info)
         
         delayed_list2_sym = elf_parser.get_symbol_by_name('xDelayedTaskList2')
         if delayed_list2_sym:
-            tasks.extend(self._walk_doubly_linked_list(
-                delayed_list2_sym['address'],
-                tcb_struct,
-                list_struct,
-                state_list_item_offset,
-                self._parse_tcb_with_context,
-                context
-            ))
+            for accessor in walk_doubly_linked_list(
+                elf_parser, dump_reader, list_struct, tcb_struct,
+                delayed_list2_sym['address'], 'pxNext', 'pxPrevious', state_list_item_offset
+            ):
+                task_info = self._parse_tcb_with_context(accessor, elf_parser, dump_reader, is_32bit)
+                if task_info:
+                    tasks.append(task_info)
         
         # Deduplicate by TCB address: a task may appear in multiple lists
         # when the delayed/suspended list overlaps with the ready list array.
@@ -613,10 +482,9 @@ class FreeRTOSV11Plugin(RTOSPlugin):
             result['stack_used_bytes'] = abs(result['current_sp'] - result['stack_start'])
             if result['stack_end']:
                 result['stack_size'] = abs(result['stack_start'] - result['stack_end'])
-                if result['stack_size'] > 0:
-                    result['stack_usage'] = round(result['stack_used_bytes'] / result['stack_size'] * 100, 1)
-                else:
-                    result['stack_usage'] = result['stack_used_bytes']
+                result['stack_usage'] = round(calculate_stack_usage(
+                    result['stack_start'], result['stack_end'], result['current_sp'], result['stack_size']
+                ), 1)
             else:
                 result['stack_size'] = 0
                 result['stack_usage'] = result['stack_used_bytes']
