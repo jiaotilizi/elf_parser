@@ -22,15 +22,74 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Generator
 
 from ..base import RTOSPlugin
-from core.utils.linked_list import walk_doubly_linked_list
 from core.utils.stack import calculate_stack_usage
 
 logger = logging.getLogger(__name__)
 
 _FREERTOS_PC_OFFSET_IN_STACK_FRAME = 4
+
+
+def _walk_freertos_doubly_linked_list(
+    elf_parser,
+    dump_reader,
+    list_node_type: Dict[str, Any],
+    item_struct_type: Dict[str, Any],
+    list_head_addr: int,
+    next_field: str,
+    prev_field: str,
+    item_to_struct_offset: int,
+    max_nodes: int = 10000
+) -> Generator:
+    if not list_head_addr:
+        return
+    
+    is_32bit = elf_parser.is_32bit()
+    
+    xlist_end_offset = elf_parser.get_member_offset('List_t', 'xListEnd', 8)
+    xlist_end_addr = list_head_addr + xlist_end_offset
+    
+    pxnext_offset = elf_parser.get_member_offset('ListItem_t', 'pxNext', 4)
+    first_item_addr = dump_reader.read_pointer(xlist_end_addr + pxnext_offset, is_32bit)
+    if not first_item_addr or first_item_addr == xlist_end_addr:
+        return
+    
+    visited = set()
+    current_ptr = first_item_addr
+    node_count = 0
+    
+    from core.elf_parser.struct_accessor import StructAccessor
+    
+    while current_ptr and current_ptr not in visited:
+        if node_count >= max_nodes:
+            logger.warning(f"_walk_freertos_doubly_linked_list: reached max_nodes={max_nodes}, stopping")
+            break
+        
+        visited.add(current_ptr)
+        node_count += 1
+        
+        if current_ptr == xlist_end_addr:
+            break
+        
+        struct_addr = current_ptr - item_to_struct_offset
+        if struct_addr <= 0:
+            break
+        
+        view_node = elf_parser.read_struct_as_node(item_struct_type, struct_addr, dump_reader)
+        if view_node is None:
+            next_ptr = dump_reader.read_pointer(current_ptr + pxnext_offset, is_32bit)
+            current_ptr = next_ptr
+            continue
+        
+        accessor = StructAccessor(view_node, dump_reader, elf_parser)
+        yield accessor
+        
+        next_ptr = dump_reader.read_pointer(current_ptr + pxnext_offset, is_32bit)
+        if not next_ptr or next_ptr == 0:
+            break
+        current_ptr = next_ptr
 
 
 class FreeRTOSV11Plugin(RTOSPlugin):
@@ -292,7 +351,7 @@ class FreeRTOSV11Plugin(RTOSPlugin):
             if ux_number_of_items == 0 or ux_number_of_items is None:
                 continue
             
-            for accessor in walk_doubly_linked_list(
+            for accessor in _walk_freertos_doubly_linked_list(
                 elf_parser, dump_reader, list_struct, tcb_struct,
                 list_addr, 'pxNext', 'pxPrevious', state_list_item_offset,
                 max_nodes=ux_number_of_items * 2
@@ -303,7 +362,7 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         
         suspended_list_sym = elf_parser.get_symbol_by_name('xSuspendedTaskList')
         if suspended_list_sym:
-            for accessor in walk_doubly_linked_list(
+            for accessor in _walk_freertos_doubly_linked_list(
                 elf_parser, dump_reader, list_struct, tcb_struct,
                 suspended_list_sym['address'], 'pxNext', 'pxPrevious', state_list_item_offset
             ):
@@ -313,7 +372,7 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         
         delayed_list1_sym = elf_parser.get_symbol_by_name('xDelayedTaskList1')
         if delayed_list1_sym:
-            for accessor in walk_doubly_linked_list(
+            for accessor in _walk_freertos_doubly_linked_list(
                 elf_parser, dump_reader, list_struct, tcb_struct,
                 delayed_list1_sym['address'], 'pxNext', 'pxPrevious', state_list_item_offset
             ):
@@ -323,7 +382,7 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         
         delayed_list2_sym = elf_parser.get_symbol_by_name('xDelayedTaskList2')
         if delayed_list2_sym:
-            for accessor in walk_doubly_linked_list(
+            for accessor in _walk_freertos_doubly_linked_list(
                 elf_parser, dump_reader, list_struct, tcb_struct,
                 delayed_list2_sym['address'], 'pxNext', 'pxPrevious', state_list_item_offset
             ):

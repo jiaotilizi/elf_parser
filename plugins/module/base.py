@@ -58,12 +58,6 @@ class ModulePlugin(Plugin):
     def profile(self):
         return self._profile
 
-    def _get_elf_parser(self):
-        return self._elf_parser
-
-    def _get_dump_reader(self):
-        return self._dump_reader
-
     def get_display_config(self) -> Dict[str, Any]:
         return {
             'display_type': 'table',

@@ -250,3 +250,8 @@ class ELFParserFactory:
                 if fallback:
                     return fallback(elf_path)
             raise
+
+    @classmethod
+    def list_parsers(cls) -> List[str]:
+        """Return a list of all registered parser types."""
+        return list(cls._parsers.keys())

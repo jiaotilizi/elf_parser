@@ -221,31 +221,130 @@ qemu-system-arm -machine mps2-an386 -cpu cortex-m4 -kernel firmware.axf \
 python3 main.py --elf firmware.axf --dump ram_dump.bin --profile profiles/qemu/mps2_an386_threadx.yaml
 ```
 
-## Version Management
+## Core API Usage
 
-### Build Information API
-
-The ELF parser can extract and display build information:
+### ProfileLoader - 配置文件加载与管理
 
 ```python
-from core.elf_parser import ELFParser
+from core.profile_loader import ProfileLoader
 
-parser = ELFParser('firmware.elf')
-parser.print_build_info()
+# 创建 ProfileLoader 实例（自动发现 profiles 目录下的所有配置）
+loader = ProfileLoader()
+
+# 列出所有可用的 profile
+profiles = loader.list_profiles()
+for p in profiles:
+    print(f"{p['name']}: {p['chip']} ({p['arch']})")
+
+# 加载指定 profile（支持名称或路径）
+profile = loader.load_profile('qemu/mps2_an386_threadx')
+
+# 获取配置信息
+memory_regions = loader.get_memory_regions(profile)  # 内存区域配置
+os_config = loader.get_os_config(profile)            # OS 配置
+display_config = loader.get_display_config(profile)  # 显示配置
+parser_config = loader.get_parser_config(profile)    # 解析器配置
+
+# 验证 profile
+errors = loader.validate_profile(profile)
+if errors:
+    print(f"Profile validation failed: {errors}")
 ```
 
-Output:
+### ELFParserFactory - ELF 解析器工厂
+
+```python
+from core.elf_parser import ELFParserFactory
+
+# 创建解析器实例（支持 'elftools', 'dwarffi', 'gimli'）
+parser = ELFParserFactory.create('firmware.elf', 'elftools')
+
+# 列出所有可用的解析器类型
+available_parsers = ELFParserFactory.list_parsers()
+
+# 基本信息
+is_32bit = parser.is_32bit()
+address_size = parser.get_address_size()  # 4 或 8
+elf_header = parser.get_elf_header()
+
+# 符号查询
+symbol = parser.get_symbol_by_name('tx_thread_0')
+if symbol:
+    print(f"Address: {symbol['address']:#08x}, Size: {symbol['size']}")
+
+# 类型查询
+struct_type = parser.get_struct_type('TX_THREAD')
+var_type = parser.get_var_type('tx_thread_0')
+
+# 成员偏移查询（用于 container-of 计算）
+offset = parser.get_member_offset('TX_THREAD', 'tx_thread_name', 0)
+
+# 内存读取
+raw_data = parser.read_memory_from_elf(0x20001000, 100)
+
+# 关键词匹配（用于 profile 验证）
+unmatched = parser.match_keywords(['threadx', 'TX_'])
+
+# 符号树读取（用于 GUI 展示）
+tree = parser.read_symbol_tree('tx_thread_0', dump_reader, max_depth=2)
 ```
-========================================
-ELF Build Information
-========================================
-ELF Path: firmware.elf
-Architecture: 32-bit
-DWARF Version: DWARF4
-Compiler: GCC
-Compiler Version: 10.3.1
-Producer: arm-none-eabi-gcc (15:10.3-2021.07-4) 10.3.1 20210621 (release)
-========================================
+
+### DumpReader - 内存 Dump 读取器
+
+```python
+from core.dump_reader import DumpReader
+
+# 创建 DumpReader（支持多内存区域配置）
+memory_regions = [
+    {'name': 'flash', 'start_addr': 0x08000000, 'size': 262144, 'offset_in_dump': 0},
+    {'name': 'ram', 'start_addr': 0x20000000, 'size': 65536, 'offset_in_dump': 262144},
+]
+dump_reader = DumpReader('dump.bin', memory_regions, endianness='little')
+
+# 读取不同类型的数据
+uint32_val = dump_reader.read_uint32(0x20001000)
+int16_val = dump_reader.read_int16(0x20001004)
+string_val = dump_reader.read_string(0x20002000, max_length=64)
+
+# 读取指针（区分 NULL 和"读不到"）
+ptr = dump_reader.read_pointer(0x20001000, is_32bit=True)
+ptr_or_zero = dump_reader.read_pointer_or_zero(0x20001000, is_32bit=True)
+
+# 按字节大小读取指针（跨架构通用）
+ptr32 = dump_reader.read_pointer_by_size(0x20001000, byte_size=4)
+ptr64 = dump_reader.read_pointer_by_size(0x20001000, byte_size=8)
+
+# 读取内存区域信息
+region_info = dump_reader.get_memory_regions_info()
+
+# 关键词匹配
+unmatched = dump_reader.match_keywords(['threadx'])
+```
+
+### 完整工作流示例
+
+```python
+from core.profile_loader import ProfileLoader
+from core.elf_parser import ELFParserFactory
+from core.dump_reader import DumpReader
+
+# 1. 加载 profile
+loader = ProfileLoader()
+profile = loader.load_profile('qemu/mps2_an386_threadx')
+
+# 2. 创建 ELF 解析器
+parser_config = loader.get_parser_config(profile)
+elf_parser = ELFParserFactory.create('firmware.elf', parser_config['type'])
+
+# 3. 创建 DumpReader
+memory_regions = loader.get_memory_regions(profile)
+dump_reader = DumpReader('dump.bin', memory_regions)
+
+# 4. 读取符号并解析结构体
+symbol = elf_parser.get_symbol_by_name('tx_thread_0')
+if symbol:
+    tree = elf_parser.read_symbol_tree(symbol['name'], dump_reader, max_depth=2)
+    print(tree)
 ```
 
 ## RTOS Plugin Development
@@ -343,6 +442,43 @@ See LICENSE file for details.
 ---
 
 ## Changelog
+
+### v0.12.0 - 2026-07-22
+
+**架构优化与代码质量提升**
+
+1. **ELFParserFactory 装饰器注册机制**
+   - 从集中式注册改为装饰器注册：`@ELFParserFactory.register('elftools')`
+   - 每个 Parser 模块独立注册，无需在 `__init__.py` 中集中维护
+   - 新增 `list_parsers()` 方法，支持运行时查询可用解析器类型
+
+2. **代码质量清理**
+   - 删除未使用的方法：`_get_elf_parser`、`_get_dump_reader`（`plugins/module/base.py`）
+   - 删除未使用的导入：`os`（`core/dump_reader.py`）
+   - 移除 `walk_doubly_linked_list` 中的 FreeRTOS 特例化逻辑，将其移至 FreeRTOS 插件内部
+   - DumpReader 端序参数验证前移至构造函数开头，强化边界防护
+
+3. **DumpReader 端序支持增强**
+   - `read_pointer()` 返回 `Optional[int]`，`None` 表示"读不到"，与 `0/NULL` 区分
+   - 新增 `read_pointer_or_zero()` 返回 `int`，用于需要非可选类型的场景
+   - 新增 `read_pointer_by_size()` 按字节大小读取指针，支持跨架构泛用
+
+4. **代码结构优化**
+   - ModulePlugin 统一属性命名：`elf_parser`、`dump_reader`、`profile`（使用 `@property` 装饰器）
+   - Plugin 基类新增 `shutdown()` 生命周期方法
+   - Plugin 新增 `get_resource_metadata()` 接口，支持插件提供自定义元数据
+
+5. **单元测试扩展**
+   - 新增 `test_factory_and_decorator.py`：工厂注册、装饰器机制、异常处理测试
+   - 新增 `test_dump_reader_endianness.py`：小端/大端读取、16/32/64位、指针读取、参数校验测试
+
+6. **README 文档更新**
+   - 新增 Core API Usage 章节，详细介绍 ProfileLoader、ELFParserFactory、DumpReader 的用法
+   - 提供完整工作流示例代码
+
+**测试结果**：227/229 测试通过（2 个跳过，7 个 RISC-V 预存在问题）
+
+---
 
 ### v0.11.0 - 2026-07-20
 

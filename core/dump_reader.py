@@ -21,7 +21,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
-import os
 import struct
 from typing import Dict, List, Optional, Tuple, Any
 
@@ -45,6 +44,9 @@ class MemoryRegion:
 
 class DumpReader:
     def __init__(self, dump_path: str, memory_regions: List[Dict[str, Any]] = None, endianness: str = 'little'):
+        if endianness not in ('little', 'big'):
+            raise ValueError(f"Invalid endianness: {endianness}. Must be 'little' or 'big'.")
+        
         self.dump_path = dump_path
         self.dump_data = b''
         self.memory_regions: List[MemoryRegion] = []
