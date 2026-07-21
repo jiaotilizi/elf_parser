@@ -30,8 +30,8 @@ class Trace32Display(DisplayBase):
         0: 'Ready',
         1: 'Completed',
         2: 'Terminated',
-        3: 'Suspended',
-        4: 'Queue Susp',
+        3: 'Delay',
+        4: 'Suspended',
         5: 'Sema Susp',
         6: 'Mutex Susp',
         7: 'Event Flag',
@@ -39,8 +39,8 @@ class Trace32Display(DisplayBase):
         9: 'Byte Susp',
         10: 'Time Susp',
         11: 'Mem Susp',
-        12: 'Delay',
-        13: 'Queue Susp',
+        12: 'Queue Susp',
+        13: 'Msg Susp',
     }
 
     def __init__(self, profile: Dict[str, Any], data_adapter=None):
