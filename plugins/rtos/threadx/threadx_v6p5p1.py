@@ -33,22 +33,22 @@ logger = logging.getLogger(__name__)
 _TX_SEMAPHORE_MAX_COUNT = 0xFFFFFFFF
 
 # ThreadX 线程状态映射表（tx_thread_state → 名称）
-# 来源：ThreadX v6.x 源码 tx_api.h 中的 TX_THREAD_STATE 枚举定义
+# 来源：OpenOCD ThreadX.c 源码 + ThreadX tx_api.h 枚举定义
 _THREAD_STATE_MAP = {
     0: 'TX_READY',
     1: 'TX_COMPLETED',
     2: 'TX_TERMINATED',
-    3: 'TX_DELAY',
-    4: 'TX_SUSPENDED',
-    5: 'TX_WAITING_FOR_SEMAPHORE',
-    6: 'TX_WAITING_FOR_MUTEX',
-    7: 'TX_WAITING_FOR_EVENT',
-    8: 'TX_WAITING_FOR_BLOCK',
-    9: 'TX_WAITING_FOR_BYTE',
-    10: 'TX_WAITING_FOR_TIME',
-    11: 'TX_WAITING_FOR_MEMORY',
-    12: 'TX_QUEUE_SUSPENDED',
-    13: 'TX_WAITING_FOR_MESSAGE',
+    3: 'TX_SUSPENDED',
+    4: 'TX_SLEEP',
+    5: 'TX_QUEUE_SUSP',
+    6: 'TX_SEMAPHORE_SUSP',
+    7: 'TX_EVENT_FLAG',
+    8: 'TX_BLOCK_MEMORY',
+    9: 'TX_BYTE_MEMORY',
+    10: 'TX_IO_SUSP',
+    11: 'TX_FILE_SUSP',
+    12: 'TX_NETWORK_SUSP',
+    13: 'TX_MUTEX_SUSP',
 }
 
 
@@ -247,7 +247,7 @@ class ThreadXV6Plugin(RTOSPlugin):
             'owner': owner,
             'owner_info': None,
             'inherit_count': accessor.get_int('tx_mutex_ownership_count'),
-            'priority': accessor.get_int('tx_mutex_highest_priority_waiting'),
+            'priority': accessor.get_int('tx_mutex_original_priority'),
             'suspended_count': accessor.get_int('tx_mutex_suspended_count'),
         }
 

@@ -153,7 +153,7 @@ class ThreadXV5Plugin(RTOSPlugin):
             'name': accessor.get_string('tx_mutex_name'),
             'owner': owner,
             'owner_info': None,
-            'priority': accessor.get_int('tx_mutex_highest_priority_waiting'),
+            'priority': accessor.get_int('tx_mutex_original_priority'),
             'inherit_count': accessor.get_int('tx_mutex_ownership_count'),
             'first_suspended': 0,
             'suspended_count': accessor.get_int('tx_mutex_suspended_count'),
