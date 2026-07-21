@@ -337,12 +337,15 @@ class DwarffiParser(ELFParser):
                     element_type = ''
                     element_count = 0
                     type_name = None
+                    size = 0
                     
                     if type_info:
                         ti_kind = type_info.get('kind', '')
                         if ti_kind in ('struct', 'union'):
                             kind = 1
                             type_name = type_info.get('name')
+                            if type_name in dffi.types:
+                                size = dffi.types[type_name].size
                         elif ti_kind == 'array':
                             kind = 2
                             element_type_info = type_info.get('subtype') or type_info.get('element_type')
@@ -350,6 +353,8 @@ class DwarffiParser(ELFParser):
                                 element_type = element_type_info.get('name', '')
                             element_count = type_info.get('count', 0) or type_info.get('element_count', 0)
                             type_name = element_type
+                            if element_type and element_type in dffi.types:
+                                size = dffi.types[element_type].size * element_count
                         elif ti_kind.startswith('ptr_'):
                             kind = 3
                             type_name = type_info.get('name')
@@ -357,7 +362,7 @@ class DwarffiParser(ELFParser):
                     symbols_data.append({
                         'name': sym_name,
                         'address': sym.address,
-                        'size': 0,
+                        'size': size,
                         'type': type_name if type_name else None,
                         'kind': kind,
                         'element_type': element_type,
