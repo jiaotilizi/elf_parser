@@ -54,14 +54,18 @@ class TestELFParserUniversality(unittest.TestCase):
         return DumpReader(dump_path, regions)
 
     @staticmethod
-    def _hex_part(ptr_str: str) -> str:
-        """从 '<ptr 0xdeadbeef>' 提取 hex 部分 'deadbeef'。"""
-        # '<ptr 0xXXXX>' → 'XXXX'
-        return ptr_str.split('0x')[1].rstrip('>')
+    def _hex_part(display_str: str) -> str:
+        """从 display_value 提取 hex 部分。
+        
+        支持新旧格式:
+        - 旧: '<ptr 0xdeadbeef>' → 'deadbeef'
+        - 新: '→ long @ 0xdeadbeef' → 'deadbeef'
+        """
+        return display_str.split('0x')[1].rstrip('>')
 
     # ── 1. 32 位指针：8 hex 宽 ─────────────────────────────────
     def test_32bit_pointer_returns_8_hex_width(self):
-        """4 字节指针返回 `<ptr 0xdeadbeef>`，宽度为 8 hex。"""
+        """4 字节指针 → kind='ptr_scalar', display_value 包含 8 hex 宽的地址。"""
         # 0xdeadbeef little-endian
         data = (0xdeadbeef).to_bytes(4, 'little')
         reader = self._make_dump_reader(data)
@@ -73,17 +77,20 @@ class TestELFParserUniversality(unittest.TestCase):
             'ref_type': {'kind': 'base', 'name': 'long', 'byte_size': 4},
         }
         result = self.parser._read_typed_value(type_info, 0x20000000, reader)
-        self.assertEqual(result, '<ptr 0xdeadbeef>')
-        # 8 hex 字符（不含 0x 前缀和 > 后缀）
-        self.assertEqual(len(self._hex_part(result)), 8)
+        # ptr_scalar 是叶子节点，不可展开
+        self.assertEqual(result.kind, 'ptr_scalar')
+        self.assertFalse(result.expandable)
+        self.assertFalse(result.meta.get('is_null'))
+        self.assertIn('0xdeadbeef', result.display_value)
+        # 8 hex 字符（不含 0x 前缀）
+        self.assertEqual(len(self._hex_part(result.display_value)), 8)
 
     # ── 2. 64 位指针：16 hex 宽（核心修复验证）─────────────────
     def test_64bit_pointer_returns_16_hex_width(self):
-        """8 字节指针返回 `<ptr 0x00000000feedface>`，宽度为 16 hex。
+        """8 字节指针 → kind='ptr_scalar', display_value 包含 16 hex 宽的地址。
 
         这是 Phase 1.1 修复的关键回归测试：如果硬编码 read_uint32，
-        会读到 0xfeedface（截断高 32 位），返回 `<ptr 0xfeedface>`（8 hex 宽），
-        测试会立即失败。
+        会读到 0xfeedface（截断高 32 位），测试会立即失败。
         """
         # 0x00000000feedface little-endian = 8 字节
         data = (0x00000000feedface).to_bytes(8, 'little')
@@ -97,13 +104,14 @@ class TestELFParserUniversality(unittest.TestCase):
             'ref_type': {'kind': 'base', 'name': 'long', 'byte_size': 8},
         }
         result = self.parser._read_typed_value(type_info, 0x20000000, reader)
-        self.assertEqual(result, '<ptr 0x00000000feedface>')
-        # 16 hex 字符（不含 0x 前缀和 > 后缀）
-        self.assertEqual(len(self._hex_part(result)), 16)
+        self.assertEqual(result.kind, 'ptr_scalar')
+        self.assertIn('0x00000000feedface', result.display_value)
+        # 16 hex 字符（不含 0x 前缀）
+        self.assertEqual(len(self._hex_part(result.display_value)), 16)
 
-    # ── 3. 64 位 char* 自动解引用为字符串 ────────────────────────
+    # ── 3. 64 位 char* 惰性读取字符串 ────────────────────────
     def test_64bit_char_pointer_auto_derefs_string(self):
-        """8 字节 char* 指向字符串地址，应自动解引用返回 Python str。"""
+        """8 字节 char* → kind='ptr_string', to_dict() 惰性读取字符串。"""
         # 8 字节指针指向偏移 8（即 0x20000008），后面跟 'hello\0'
         ptr_val = 0x20000008
         data = ptr_val.to_bytes(8, 'little') + b'hello\x00'
@@ -122,12 +130,15 @@ class TestELFParserUniversality(unittest.TestCase):
             },
         }
         result = self.parser._read_typed_value(type_info, 0x20000000, reader)
-        self.assertIsInstance(result, str)
-        self.assertEqual(result, 'hello')
+        # ptr_string: display_value 是地址格式，不是字符串
+        self.assertEqual(result.kind, 'ptr_string')
+        self.assertIn('0x0000000020000008', result.display_value)
+        # to_dict() with dump_reader 惰性读取字符串
+        self.assertEqual(result.to_dict(dump_reader=reader), 'hello')
 
     # ── 4. 0 值 char* 返回 None ────────────────────────────────
     def test_null_char_pointer_returns_none(self):
-        """0 值 char* 返回 None，而非 `<ptr 0x0000000000000000>`。"""
+        """0 值 char* 的 to_dict() 返回 None。"""
         data = b'\x00' * 32
         reader = self._make_dump_reader(data)
         self.parser._address_size = 8
@@ -139,11 +150,14 @@ class TestELFParserUniversality(unittest.TestCase):
             'ref_type': {'kind': 'base', 'name': 'char', 'byte_size': 1},
         }
         result = self.parser._read_typed_value(type_info, 0x20000000, reader)
-        self.assertIsNone(result)
+        self.assertEqual(result.kind, 'ptr_string')
+        self.assertTrue(result.meta.get('is_null'))
+        self.assertIsNone(result.to_dict())
+        self.assertEqual(result.raw_value, 0)
 
     # ── 5. 非 char* 的 0 值指针统一返回 None ───────────────────
     def test_null_non_char_pointer_returns_hex(self):
-        """0 值指针（包括 long*、struct*、void*）统一返回 None。
+        """0 值指针（包括 long*、struct*、void*）的 to_dict() 返回 None。
 
         设计决策：空指针表示"未指向任何对象"，与有效指针的 hex 字符串
         区分开，便于调用方判断指针是否有效。
@@ -158,11 +172,13 @@ class TestELFParserUniversality(unittest.TestCase):
             'ref_type': {'kind': 'base', 'name': 'long', 'byte_size': 4},
         }
         result = self.parser._read_typed_value(type_info, 0x20000000, reader)
-        self.assertIsNone(result, "Null pointer should return None")
+        self.assertEqual(result.kind, 'ptr_scalar')
+        self.assertTrue(result.meta.get('is_null'))
+        self.assertIsNone(result.to_dict(), "Null pointer should return None via to_dict()")
 
     # ── 5b. 非 0 值的非 char*/struct* 指针返回 hex 字符串 ──────
     def test_non_null_non_char_non_struct_pointer_returns_hex(self):
-        """非 0 值的 long* 仍返回 `<ptr 0x...>` 字符串。"""
+        """非 0 值的 long* → kind='ptr_scalar', display_value 包含 hex 地址。"""
         data = b'\x34\x12\x00\x00' + b'\x00' * 28  # ptr_val = 0x1234
         reader = self._make_dump_reader(data)
 
@@ -173,7 +189,8 @@ class TestELFParserUniversality(unittest.TestCase):
             'ref_type': {'kind': 'base', 'name': 'long', 'byte_size': 4},
         }
         result = self.parser._read_typed_value(type_info, 0x20000000, reader)
-        self.assertEqual(result, '<ptr 0x00001234>')
+        self.assertEqual(result.kind, 'ptr_scalar')
+        self.assertIn('0x00001234', result.display_value)
 
     # ── 6. 异常 byte_size 走 fallback 不崩 ────────────────────
     def test_unusual_byte_size_fallback_no_crash(self):
@@ -189,8 +206,9 @@ class TestELFParserUniversality(unittest.TestCase):
         }
         # 不应抛异常
         result = self.parser._read_typed_value(type_info, 0x20000000, reader)
+        self.assertEqual(result.kind, 'ptr_scalar')
         # byte_size=2 走 else 分支，hex_width=8（非 8 字节都按 8 hex 宽格式化）
-        self.assertEqual(result, '<ptr 0x0000cdab>')
+        self.assertIn('0x0000cdab', result.display_value)
 
     # ── 7. byte_size 缺失时回退到 _address_size ────────────────
     def test_missing_byte_size_uses_address_size(self):
@@ -208,7 +226,8 @@ class TestELFParserUniversality(unittest.TestCase):
             'ref_type': {'kind': 'base', 'name': 'long', 'byte_size': 4},
         }
         result = self.parser._read_typed_value(type_info, 0x20000000, reader)
-        self.assertEqual(result, '<ptr 0x12345678>')
+        self.assertEqual(result.kind, 'ptr_scalar')
+        self.assertIn('0x12345678', result.display_value)
 
     # ── 8. DumpReader.read_pointer_by_size 一致性 ─────────────
     def test_dump_reader_pointer_by_size_helper(self):
@@ -226,7 +245,7 @@ class TestELFParserUniversality(unittest.TestCase):
 
     # ── 9. struct 指针自动解引用 ────────────────────────────────
     def test_struct_pointer_auto_deref(self):
-        """struct 指针自动解引用并展开字段为 dict。"""
+        """struct 指针 → kind='ptr_struct', to_dict() 自动解引用并展开字段为 dict。"""
         # 内存布局：
         #   0x20000000: ptr_val = 0x20000010  (指向结构体)
         #   0x20000010: field_a (uint32) = 0xAABBCCDD
@@ -258,13 +277,20 @@ class TestELFParserUniversality(unittest.TestCase):
         }
 
         result = self.parser._read_typed_value(ptr_type, 0x20000000, reader)
-        self.assertIsInstance(result, dict, "struct* should auto-deref to dict")
-        self.assertEqual(result['field_a'], 0xAABBCCDD)
-        self.assertEqual(result['field_b'], 0x42)
+        # ptr_struct 是叶子节点（指针永远不包含 children）
+        self.assertEqual(result.kind, 'ptr_struct')
+        self.assertFalse(result.children)
+        self.assertFalse(result.meta.get('is_null'))
+
+        # to_dict() with dump_reader auto-dereferences
+        d = result.to_dict(dump_reader=reader, elf_parser=self.parser)
+        self.assertIsInstance(d, dict, "struct* should auto-deref to dict via to_dict()")
+        self.assertEqual(d['field_a'], 0xAABBCCDD)
+        self.assertEqual(d['field_b'], 0x42)
 
     # ── 10. struct 指针 0 值返回 None ──────────────────────────
     def test_null_struct_pointer_returns_none(self):
-        """0 值 struct 指针返回 None，不解引用。"""
+        """0 值 struct 指针的 to_dict() 返回 None，不解引用。"""
         data = b'\x00' * 32
         reader = self._make_dump_reader(data)
 
@@ -281,11 +307,11 @@ class TestELFParserUniversality(unittest.TestCase):
             'ref_type': struct_type,
         }
         result = self.parser._read_typed_value(ptr_type, 0x20000000, reader)
-        self.assertIsNone(result, "Null struct pointer should return None")
+        self.assertIsNone(result.to_dict(), "Null struct pointer should return None")
 
     # ── 11. struct 指针指向无效地址时优雅返回 ─────────────────
     def test_struct_pointer_invalid_address(self):
-        """struct 指针指向的地址不在 dump 范围内，返回错误 dict 而非崩溃。"""
+        """struct 指针指向的地址不在 dump 范围内，to_dict() 返回错误 dict 而非崩溃。"""
         # ptr_val = 0xFFFFFFFF（不在 dump 范围内）
         data = (0xFFFFFFFF).to_bytes(4, 'little') + b'\x00' * 28
         reader = self._make_dump_reader(data)
@@ -306,13 +332,14 @@ class TestELFParserUniversality(unittest.TestCase):
             'ref_type': struct_type,
         }
         result = self.parser._read_typed_value(ptr_type, 0x20000000, reader)
-        self.assertIsInstance(result, dict)
-        self.assertIn('error', result)
-        self.assertEqual(result['error'], 'invalid pointer address')
+        d = result.to_dict(dump_reader=reader, elf_parser=self.parser)
+        self.assertIsInstance(d, dict)
+        self.assertIn('error', d)
+        self.assertEqual(d['error'], 'invalid pointer address')
 
     # ── 12. typedef 包装的 struct 指针也能解引用 ──────────────
     def test_typedef_wrapped_struct_pointer_deref(self):
-        """typedef struct { ... } MyType; MyType* 也能自动解引用。"""
+        """typedef struct { ... } MyType; MyType* 通过 to_dict() 也能自动解引用。"""
         # 0x20000000: ptr_val = 0x20000010
         # 0x20000010: field = 0x12345678
         ptr_bytes = (0x20000010).to_bytes(4, 'little')
@@ -341,12 +368,13 @@ class TestELFParserUniversality(unittest.TestCase):
             'ref_type': typedef_type,
         }
         result = self.parser._read_typed_value(ptr_type, 0x20000000, reader)
-        self.assertIsInstance(result, dict)
-        self.assertEqual(result['field'], 0x12345678)
+        d = result.to_dict(dump_reader=reader, elf_parser=self.parser)
+        self.assertIsInstance(d, dict)
+        self.assertEqual(d['field'], 0x12345678)
 
     # ── 13. 循环引用 struct 指针不会无限递归 ──────────────────
     def test_struct_pointer_circular_reference_protection(self):
-        """struct 指针形成循环引用时不无限递归。
+        """struct 指针形成循环引用时 to_dict() 不无限递归。
 
         模拟：节点 A.next -> 节点 B.next -> 节点 A.next ...
         """
@@ -393,10 +421,11 @@ class TestELFParserUniversality(unittest.TestCase):
 
         # 不应崩溃或无限递归
         result = self.parser._read_typed_value(ptr_type, 0x20000000, reader)
-        self.assertIsInstance(result, dict)
-        self.assertEqual(result['value'], 0x11)
+        d = result.to_dict(dump_reader=reader, elf_parser=self.parser)
+        self.assertIsInstance(d, dict)
+        self.assertEqual(d['value'], 0x11)
         # next 字段是另一个 Node*，解引用得到节点 B
-        next_node = result['next']
+        next_node = d['next']
         self.assertIsInstance(next_node, dict)
         self.assertEqual(next_node['value'], 0x22)
         # 节点 B 的 next 指回节点 A，应该被循环引用保护拦截

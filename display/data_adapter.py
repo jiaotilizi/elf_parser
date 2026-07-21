@@ -37,7 +37,7 @@ class DataAdapter:
                 {'name': 'name', 'label': 'Name', 'type': 'string'},
                 {'name': 'state_name', 'label': 'State', 'type': 'string'},
                 {'name': 'priority', 'label': 'Priority', 'type': 'number'},
-                {'name': 'cpu_usage', 'label': 'CPU %', 'type': 'number'},
+                {'name': 'schedule_ratio', 'label': 'Sched %', 'type': 'number'},
                 {'name': 'stack_size', 'label': 'Stack Sz', 'type': 'number'},
                 {'name': 'stack_usage', 'label': 'Stack Used', 'type': 'number'},
             ]

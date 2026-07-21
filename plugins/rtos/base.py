@@ -124,6 +124,9 @@ class RTOSPlugin(Plugin):
     def _is_32bit(self) -> bool:
         return self._elf_parser.is_32bit() if self._elf_parser else True
     
+    # DEPRECATED: Use StructAccessor.get() with dotted paths instead.
+    # This method is kept for backward compatibility with plugins that
+    # haven't migrated to the StructAccessor API.
     def _find_member_offset(self, struct_type: Dict[str, Any], member_name: str, default_offset: int = 0) -> int:
         if not struct_type:
             return default_offset
@@ -148,6 +151,9 @@ class RTOSPlugin(Plugin):
         except Exception:
             return ''
 
+    # DEPRECATED: Use StructAccessor.get_string() instead.
+    # This method is kept for backward compatibility with plugins that
+    # haven't migrated to the StructAccessor API.
     def _read_resource_name(self, addr: int, name_ptr_addr: int,
                             is_32bit: bool = True, max_length: int = 32) -> str:
         """Read a resource name from a pointer field.
@@ -215,14 +221,31 @@ class RTOSPlugin(Plugin):
 
         next_offset = self._find_member_offset(struct_type, next_field_name)
 
+        # Detect if the parser supports the new StructAccessor API
+        _has_read_as_node = hasattr(elf_parser, 'read_struct_as_node')
+
         visited = set()
         current_ptr = head_ptr
         results = []
 
+        # Import lazily to avoid circular imports
+        from core.elf_parser.struct_accessor import StructAccessor
+
         while current_ptr and current_ptr not in visited:
             visited.add(current_ptr)
 
-            item_info = parse_func(current_ptr, struct_type, elf_parser, dump_reader, is_32bit)
+            if _has_read_as_node:
+                # New API: create StructAccessor from ViewNode
+                view_node = elf_parser.read_struct_as_node(struct_type, current_ptr, dump_reader)
+                if view_node is None:
+                    current_ptr = dump_reader.read_pointer(current_ptr + next_offset, is_32bit)
+                    continue
+                accessor = StructAccessor(view_node, dump_reader, elf_parser)
+                item_info = parse_func(accessor, elf_parser, dump_reader, is_32bit)
+            else:
+                # Old API: pass raw struct_type dict
+                item_info = parse_func(current_ptr, struct_type, elf_parser, dump_reader, is_32bit)
+
             if item_info:
                 results.append(item_info)
 
@@ -248,6 +271,9 @@ class RTOSPlugin(Plugin):
 
         return used / stack_size * 100 if stack_size > 0 else 0.0
     
+    # DEPRECATED: Use StructAccessor.get_enum_name() with fallback_map instead.
+    # This method is kept for backward compatibility with plugins that
+    # haven't migrated to the StructAccessor API.
     def _normalize_task_state(self, state: int, state_map: Dict[int, str]) -> str:
         return state_map.get(state, f'UNKNOWN({state})')
     

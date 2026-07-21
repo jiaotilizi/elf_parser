@@ -25,8 +25,11 @@ from .base import ELFParser, ELFParserFactory
 from .elftools_parser import ElftoolsParser
 from .dwarffi_parser import DwarffiParser
 from .gimli_parser import GimliParser
+from .struct_accessor import ViewNode, StructAccessor
 
 __all__ = [
     'ELFParser',
     'ELFParserFactory',
+    'ViewNode',
+    'StructAccessor',
 ]

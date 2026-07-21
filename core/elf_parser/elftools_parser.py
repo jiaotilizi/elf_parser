@@ -35,11 +35,25 @@ from elftools.dwarf.compileunit import CompileUnit
 from elftools.dwarf.die import DIE
 
 from .base import ELFParser
+from .struct_accessor import ViewNode, StructAccessor
 
 logger = logging.getLogger(__name__)
 
+# DWARF base type encoding constants
+_DW_ATE_unsigned = 0x07
+_DW_ATE_unsigned_char = 0x08
+_DW_ATE_signed = 0x05
+_DW_ATE_signed_char = 0x06
+
 
 class ElftoolsParser(ELFParser):
+    # Maximum recursion depth for DWARF type parsing and _read_typed_value.
+    # Based on empirical observation of embedded RTOS struct nesting depth;
+    # legitimate struct hierarchies rarely exceed 10 levels. A value of 20
+    # provides a generous safety margin against infinite recursion from
+    # circular type references while never truncating valid data.
+    _MAX_RECURSION_DEPTH = 20
+
     def __init__(self, elf_path: str):
         self.elf_path = elf_path
         self.elffile = None
@@ -300,7 +314,7 @@ class ElftoolsParser(ELFParser):
         
         _visited.add(die.offset)
         
-        if _depth > 20:
+        if _depth > ElftoolsParser._MAX_RECURSION_DEPTH:
             logger.debug("Deep recursion in struct parsing (depth=%d), die offset=0x%x", _depth, die.offset)
             return {'kind': 'struct', 'name': None, 'byte_size': 0, 'members': [], '_deep_truncated': True}
         
@@ -369,42 +383,41 @@ class ElftoolsParser(ELFParser):
             info['ref_type_offset'] = ref_die.offset
             info['ref_type'] = self._parse_any_die(ref_die, die_by_offset, _depth + 1, _visited)
             # 如果最终指向 char（可能经过 const_type 修饰），给个友好名字
-            if self._is_char_pointer(info):
+            if self._classify_pointer_kind(info) == 'ptr_string':
                 info['name'] = 'char*'
         return info
 
-    def _is_char_pointer(self, type_info: Optional[Dict[str, Any]]) -> bool:
-        """递归判断一个 pointer 类型是否最终指向 char。"""
-        if not type_info:
-            return False
-        ref = type_info.get('ref_type')
-        while ref:
-            kind = ref.get('kind')
-            if kind == 'base':
-                return ref.get('name') == 'char'
-            elif kind in ('const', 'volatile', 'typedef'):
-                ref = ref.get('ref_type')
-            else:
-                return False
-        return False
+    def _classify_pointer_kind(self, type_info: Dict[str, Any]) -> str:
+        """Classify a pointer type into one of: ptr_struct, ptr_string, ptr_func, ptr_scalar.
 
-    def _is_struct_pointer(self, type_info: Optional[Dict[str, Any]]) -> bool:
-        """递归判断一个 pointer 类型是否最终指向 struct/union。
-
-        用于自动解引用 TCB*、TX_THREAD* 等结构体指针，递归展开其字段。
+        Follows the DWARF Type → ViewNode Behavior Contract:
+        - target struct/union/class → ptr_struct
+        - target char (byte_size=1) → ptr_string
+        - target function/subroutine → ptr_func
+        - everything else (void/base/unresolved) → ptr_scalar
         """
-        if not type_info:
-            return False
-        ref = type_info.get('ref_type')
-        while ref:
-            kind = ref.get('kind')
-            if kind in ('struct', 'union'):
-                return True
-            elif kind in ('const', 'volatile', 'typedef'):
-                ref = ref.get('ref_type')
-            else:
-                return False
-        return False
+        ref_type = type_info.get('ref_type')
+        if not ref_type:
+            return 'ptr_scalar'
+
+        # Unwrap const/volatile/typedef via shared helper
+        current = self._unwrap_type(ref_type)
+
+        if not current:
+            return 'ptr_scalar'
+
+        kind = current.get('kind')
+
+        if kind in ('struct', 'union', 'class'):
+            return 'ptr_struct'
+
+        if kind == 'base' and current.get('name') == 'char' and current.get('byte_size') == 1:
+            return 'ptr_string'
+
+        if kind in ('subroutine', 'subroutine_type', 'function'):
+            return 'ptr_func'
+
+        return 'ptr_scalar'
 
     def _unwrap_type(self, type_info: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """剥离 typedef/const/volatile 包装，返回最内层的真实类型。"""
@@ -546,18 +559,9 @@ class ElftoolsParser(ELFParser):
         if 'DW_AT_data_member_location' in die.attributes:
             loc_attr = die.attributes['DW_AT_data_member_location']
             val = loc_attr.value
-            # 数据成员位置可能是 DW_FORM_exprloc（一个字节数组，如 [DW_OP_plus_uconst, N]）
+            # 数据成员位置可能是 DW_FORM_exprloc（一个 DWARF 表达式字节数组）
             if isinstance(val, bytes):
-                # 解析简单的 DW_OP_plus_uconst (0x23) 后跟 LEB128
-                if len(val) >= 2 and val[0] == 0x23:
-                    n = 0
-                    shift = 0
-                    for b in val[1:]:
-                        n |= (b & 0x7f) << shift
-                        if not (b & 0x80):
-                            break
-                        shift += 7
-                    member['offset'] = n
+                member['offset'] = self._parse_dw_op_location(val)
             else:
                 member['offset'] = val
 
@@ -576,9 +580,139 @@ class ElftoolsParser(ELFParser):
                         member['byte_size'] = type_info['byte_size']
         return member
 
+    @staticmethod
+    def _parse_dw_op_location(expr: bytes) -> int:
+        """Parse a DWARF location expression to extract a member offset.
+
+        Supports common DW_OP encodings used by GCC, IAR, and ARMCC:
+        - DW_OP_plus_uconst (0x23) + ULEB128 → offset = N
+        - DW_OP_constu (0x10) + ULEB128 + DW_OP_plus (0x22) → offset = N
+
+        For unrecognized opcodes, logs a warning and returns 0 to avoid
+        silent data corruption.
+        """
+        i = 0
+        while i < len(expr):
+            op = expr[i]
+            i += 1
+
+            if op == 0x23:  # DW_OP_plus_uconst
+                n, _ = ElftoolsParser._read_uleb128(expr, i)
+                return n
+
+            if op == 0x10:  # DW_OP_constu
+                n, consumed = ElftoolsParser._read_uleb128(expr, i)
+                i += consumed
+                # Expect DW_OP_plus next
+                if i < len(expr) and expr[i] == 0x22:  # DW_OP_plus
+                    return n
+
+            # DW_OP_addr (0x03): skip address-sized operand
+            if op == 0x03:
+                i += 4  # 32-bit address; 64-bit would be 8 but rare in this context
+                continue
+
+            # DW_OP_deref (0x06), DW_OP_dup (0x12), DW_OP_drop (0x13): no operand
+            if op in (0x06, 0x12, 0x13, 0x22):
+                continue
+
+            # DW_OP_lit0..DW_OP_lit31 (0x30..0x4F): no operand
+            if 0x30 <= op <= 0x4F:
+                continue
+
+            # DW_OP_reg0..DW_OP_reg31 (0x50..0x6F): no operand
+            if 0x50 <= op <= 0x6F:
+                continue
+
+            # DW_OP_breg0..DW_OP_breg31 (0x70..0x8F): followed by ULEB128
+            if 0x70 <= op <= 0x8F:
+                _, consumed = ElftoolsParser._read_uleb128(expr, i)
+                i += consumed
+                continue
+
+            # Unknown opcode: warn and abort
+            logger.warning(
+                "Unrecognized DW_OP code 0x%02x in member location expression "
+                "(offset=0x%x). Member offset will be 0; data may be incorrect.",
+                op, i - 1
+            )
+            return 0
+
+        return 0
+
+    @staticmethod
+    def _read_uleb128(data: bytes, offset: int) -> Tuple[int, int]:
+        """Read a ULEB128-encoded integer from bytes starting at offset.
+
+        Returns (value, bytes_consumed).
+        """
+        n = 0
+        shift = 0
+        consumed = 0
+        while offset + consumed < len(data):
+            b = data[offset + consumed]
+            consumed += 1
+            n |= (b & 0x7F) << shift
+            if not (b & 0x80):
+                break
+            shift += 7
+        return n, consumed
+
     # ------------------------------------------------------------------
     # 自动结构体解析（递归展开嵌套结构体、数组、指针）
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _read_uint_by_size(dump_reader, address: int, byte_size: int) -> Optional[int]:
+        """Read an unsigned integer of the given byte size from dump_reader.
+
+        Centralizes the byte_size → read_uint* dispatch to eliminate
+        duplicated if/elif chains in _read_typed_value.
+        """
+        _READERS = {
+            1: dump_reader.read_uint8,
+            2: dump_reader.read_uint16,
+            4: dump_reader.read_uint32,
+            8: dump_reader.read_uint64,
+        }
+        reader = _READERS.get(byte_size)
+        return reader(address) if reader else None
+
+    @staticmethod
+    def _is_unsigned_encoding(encoding) -> bool:
+        """Check if a DW_AT_encoding value represents an unsigned type."""
+        if encoding is None:
+            return False
+        if isinstance(encoding, int):
+            return encoding in (_DW_ATE_unsigned, _DW_ATE_unsigned_char)
+        return str(encoding).lower() in ('unsigned', 'unsigned_char')
+
+    @staticmethod
+    def _build_enum_display(value: int, enum_members: list) -> str:
+        """Build display_value for an enum: 'ENUM_NAME(value)' or 'value'."""
+        for member in enum_members:
+            if member.get('value') == value:
+                return f"{member.get('name', '?')}({value})"
+        return str(value)
+
+    @staticmethod
+    def _get_pointer_target_name(type_info: Dict[str, Any]) -> str:
+        """Get a human-readable name for what a pointer points to."""
+        ref_type = type_info.get('ref_type')
+        if not ref_type:
+            return 'void'
+        current = ref_type
+        while current:
+            kind = current.get('kind')
+            if kind in ('const', 'volatile', 'typedef'):
+                name = current.get('name')
+                if name and kind == 'typedef':
+                    return name
+                current = current.get('ref_type')
+            else:
+                return current.get('name') or kind
+        return 'void'
+
     def parse_struct_auto(self, var_name: str, dump_reader) -> Optional[Dict[str, Any]]:
         """根据符号名 + DWARF 类型信息，自动从 dump_reader 中递归展开结构体。
 
@@ -591,51 +725,144 @@ class ElftoolsParser(ELFParser):
         - 结构体数组（含元素个数从 DWARF upper_bound 自动推断）
         - char* 指针（自动解引用读取字符串）
         - 一般指针（读取指针值并以 hex 显示）
+
+        返回 dict 格式（向后兼容）。新代码应使用 read_struct_as_node() 获取 ViewNode。
         """
         sym = self.get_symbol_by_name(var_name)
         if not sym:
             return None
 
-        # 通过 get_variable_type 触发懒加载（首次查询时按需解析 DWARF 类型）
         type_info = self.get_variable_type(var_name)
         if not type_info:
             return None
 
-        return self._read_typed_value(type_info, sym['address'], dump_reader, depth=0)
+        view_node = self._read_typed_value(type_info, sym['address'], dump_reader, depth=0)
+        if view_node is None:
+            return None
+        return view_node.to_dict(dump_reader=dump_reader, elf_parser=self)
+
+    def read_struct_as_node(self, struct_type: Dict[str, Any], address: int,
+                            dump_reader) -> Optional[ViewNode]:
+        """Read a struct at the given address and return a ViewNode tree.
+
+        This is the new API for reading typed values. Unlike parse_struct_auto
+        which returns a plain dict, this returns a ViewNode tree that can be
+        used with StructAccessor for convenient field access.
+
+        Args:
+            struct_type: DWARF type info dict (from get_struct_type or get_variable_type).
+            address: Memory address to read from.
+            dump_reader: DumpReader instance.
+
+        Returns:
+            ViewNode tree, or None if the read failed.
+        """
+        return self._read_typed_value(struct_type, address, dump_reader, depth=0)
+
+    def create_accessor(self, var_name: str, dump_reader) -> Optional[StructAccessor]:
+        """Create a StructAccessor for a global variable.
+
+        Convenience method that combines get_variable_type + _read_typed_value
+        + StructAccessor construction.
+
+        Args:
+            var_name: Global variable name.
+            dump_reader: DumpReader instance.
+
+        Returns:
+            StructAccessor, or None if the variable or its type is not found.
+        """
+        sym = self.get_symbol_by_name(var_name)
+        if not sym:
+            return None
+        type_info = self.get_variable_type(var_name)
+        if not type_info:
+            return None
+        view_node = self._read_typed_value(type_info, sym['address'], dump_reader, depth=0)
+        if view_node is None:
+            return None
+        return StructAccessor(view_node, dump_reader, self)
 
     def _read_typed_value(self, type_info: Dict[str, Any], address: int,
-                         dump_reader, depth: int = 0, 
-                         _visited: Optional[set] = None) -> Any:
+                         dump_reader, depth: int = 0,
+                         _visited: Optional[set] = None) -> Optional[ViewNode]:
+        """Read a typed value from memory and return a ViewNode tree.
+
+        This is the core method for the new architecture. It recursively reads
+        values from dump_reader based on DWARF type information and returns
+        ViewNode trees instead of raw dicts.
+
+        Args:
+            type_info: DWARF type info dict.
+            address: Memory address to read from.
+            dump_reader: DumpReader instance.
+            depth: Current recursion depth.
+            _visited: Set of visited addresses for cycle detection.
+
+        Returns:
+            ViewNode tree, or None on error.
+        """
         if _visited is None:
             _visited = set()
-        
-        if depth > 20:
+
+        if depth > ElftoolsParser._MAX_RECURSION_DEPTH:
             logger.debug("Deep recursion in _read_typed_value (depth=%d), address=0x%x", depth, address)
-            return {'error': 'max depth exceeded'}
+            return None
 
         if not type_info:
             return None
 
         kind = type_info.get('kind')
+        type_name = type_info.get('name') or ''
 
-        # typedef/const/volatile：解引用后再走一遍
+        # typedef/const/volatile：透明穿透，保留 type_chain 在 meta
         if kind in ('typedef', 'const', 'volatile'):
-            return self._read_typed_value(type_info.get('ref_type'), address, dump_reader, depth + 1, _visited)
+            inner = self._read_typed_value(type_info.get('ref_type'), address, dump_reader, depth + 1, _visited)
+            if inner:
+                chain = inner.meta.get('type_chain', [])
+                chain.append({'kind': kind, 'name': type_name})
+                inner.meta['type_chain'] = chain
+            return inner
 
-        # 基础类型：直接读取
+        # 基础类型 → scalar
         if kind == 'base':
             bs = type_info.get('byte_size', 4)
-            if bs == 1:
-                return dump_reader.read_uint8(address)
-            elif bs == 2:
-                return dump_reader.read_uint16(address)
-            elif bs == 4:
-                return dump_reader.read_uint32(address)
-            elif bs == 8:
-                return dump_reader.read_uint64(address)
-            return None
+            raw = self._read_uint_by_size(dump_reader, address, bs)
+            if raw is None:
+                return None
 
-        # 指针
+            encoding = type_info.get('encoding')
+            if self._is_unsigned_encoding(encoding) or 'unsigned' in (type_name or '').lower():
+                display = f'0x{raw:X}'
+            else:
+                display = str(raw)
+
+            return ViewNode(
+                name='', type_name=type_name, kind='scalar',
+                raw_value=raw, display_value=display,
+                address=address, byte_size=bs,
+                meta={'encoding': encoding}
+            )
+
+        # 枚举类型
+        if kind == 'enum':
+            bs = type_info.get('byte_size', 4)
+            raw = self._read_uint_by_size(dump_reader, address, bs)
+            if raw is None:
+                return None
+
+            enum_members = type_info.get('members', [])
+            display = self._build_enum_display(raw, enum_members)
+
+            return ViewNode(
+                name='', type_name=type_name, kind='enum',
+                raw_value=raw, display_value=display,
+                address=address, byte_size=bs,
+                meta={'enum_members': enum_members}
+            )
+
+        # ── 指针类型：严格按照 Contract 分为四种 kind ──
+        # 禁止在 ViewNode 构建阶段对任何指针执行目标地址内存读取
         if kind == 'pointer':
             ptr_size = type_info.get('byte_size', self._address_size)
             if ptr_size == 4:
@@ -645,103 +872,108 @@ class ElftoolsParser(ELFParser):
             else:
                 raw = dump_reader.read_memory(address, ptr_size)
                 ptr_val = int.from_bytes(raw, 'little') if raw else 0
+
             hex_width = 16 if ptr_size == 8 else 8
+            is_null = (ptr_val == 0 or ptr_val is None)
+            ref_type = type_info.get('ref_type')
+            ptr_target_name = type_info.get('name') or self._get_pointer_target_name(type_info)
 
-            # 空指针保护：返回 None
-            if ptr_val == 0:
-                return None
+            # Classify pointer sub-kind
+            ptr_kind = self._classify_pointer_kind(type_info)
 
-            # char* → 自动解引用读取字符串
-            if self._is_char_pointer(type_info):
-                try:
-                    return dump_reader.read_string(ptr_val)
-                except Exception:
-                    return f'<ptr 0x{ptr_val:0{hex_width}x}>'
+            # Build display_value (no target memory reads)
+            if ptr_kind == 'ptr_func':
+                display = f'&{ptr_target_name}'
+            elif is_null:
+                display = 'NULL'
+            else:
+                display = f'→ {ptr_target_name} @ 0x{ptr_val:0{hex_width}x}'
 
-            # struct/union 指针 → 自动解引用并递归展开字段
-            # 例如 TCB_t* / TX_THREAD* 会自动展开为 dict
-            if self._is_struct_pointer(type_info):
-                # 循环引用保护：(解引用地址, 指针类型偏移) 作为访问键
-                type_offset = type_info.get('type_offset')
-                visit_key = None
-                if type_offset is not None:
-                    visit_key = ('deref', ptr_val, type_offset)
-                    if visit_key in _visited:
-                        return {'error': 'circular pointer reference',
-                                'ptr': f'0x{ptr_val:0{hex_width}x}'}
-                    _visited.add(visit_key)
+            return ViewNode(
+                name='', type_name=ptr_target_name, kind=ptr_kind,
+                raw_value=ptr_val if not is_null else 0,
+                display_value=display,
+                address=address, byte_size=ptr_size,
+                meta={
+                    'target_type': ref_type,
+                    'is_null': is_null,
+                    'is_valid': not is_null,
+                }
+            )
 
-                # 取出最内层的 struct/union 类型信息
-                ref_type = self._unwrap_type(type_info.get('ref_type'))
-                if ref_type is None:
-                    if visit_key is not None:
-                        _visited.discard(visit_key)
-                    return f'<ptr 0x{ptr_val:0{hex_width}x}>'
-
-                # 地址有效性保护：解引用前确认目标地址在 dump 范围内
-                struct_size = ref_type.get('byte_size', 0)
-                if struct_size > 0:
-                    probe = dump_reader.read_memory(ptr_val, min(struct_size, 4))
-                    if probe is None:
-                        if visit_key is not None:
-                            _visited.discard(visit_key)
-                        return {'error': 'invalid pointer address',
-                                'ptr': f'0x{ptr_val:0{hex_width}x}'}
-
-                result = self._read_typed_value(ref_type, ptr_val, dump_reader,
-                                                 depth + 1, _visited)
-                if visit_key is not None:
-                    _visited.discard(visit_key)
-                return result
-
-            # 其他指针（void*, int*, 函数指针等）：返回 hex 字符串
-            return f'<ptr 0x{ptr_val:0{hex_width}x}>'
-
-        # 数组：逐元素读取
+        # 数组：逐元素读取；char 数组特化为 string
         if kind == 'array':
             elem_type = type_info.get('element_type')
             count = type_info.get('element_count', 0)
             elem_size = elem_type.get('byte_size', 0) if elem_type else 0
-            if not elem_size:
-                return []
+            if not elem_size or count == 0:
+                return ViewNode(
+                    name='', type_name=type_name, kind='array',
+                    address=address, byte_size=0,
+                    display_value='[0 items]',
+                    meta={'element_count': 0}
+                )
 
-            # char 数组（含 const char[]）自动转字符串
-            # 兼容 TCB_t.pcTaskName[16]、TX_THREAD.tx_thread_name[32] 等场景
+            # char 数组（含 const char[]）→ kind='string'
             unwrapped_elem = self._unwrap_type(elem_type)
             if unwrapped_elem and unwrapped_elem.get('kind') == 'base' \
                     and unwrapped_elem.get('name') == 'char':
                 try:
                     s = dump_reader.read_string(address, max_length=count)
-                    return s if s is not None else ''
+                    display = s if s is not None else ''
                 except Exception:
-                    pass  # 转字符串失败时降级到逐元素读取
+                    display = ''
+                return ViewNode(
+                    name='', type_name=f'char[{count}]', kind='string',
+                    display_value=display,
+                    address=address, byte_size=type_info.get('byte_size', 0),
+                    meta={'element_count': count}
+                )
 
-            result = []
+            children = []
             for i in range(count):
                 elem_addr = address + i * elem_size
-                result.append(self._read_typed_value(elem_type, elem_addr, dump_reader, depth + 1, _visited))
-            return result
+                child_node = self._read_typed_value(elem_type, elem_addr, dump_reader, depth + 1, _visited)
+                if child_node:
+                    child_node.name = f'[{i}]'
+                    children.append(child_node)
 
-        # 结构体：逐成员读取
+            return ViewNode(
+                name='', type_name=type_name, kind='array',
+                children=children,
+                address=address, byte_size=type_info.get('byte_size', 0),
+                display_value=f'[{count} items]',
+                meta={'element_count': count}
+            )
+
+        # 结构体/联合体：逐成员读取
         if kind in ('struct', 'union'):
             type_offset = type_info.get('type_offset')
             visit_key = None
             if type_offset is not None:
                 visit_key = (address, type_offset)
                 if visit_key in _visited:
-                    return {'error': 'circular reference detected'}
+                    return None
                 _visited.add(visit_key)
-            
-            result = {}
+
+            children = []
             for m in type_info.get('members', []):
                 m_name = m.get('name') or f'<anon@{m.get("offset")}>'
                 m_addr = address + m.get('offset', 0)
-                result[m_name] = self._read_typed_value(m.get('type'), m_addr, dump_reader, depth + 1, _visited)
-            
+                child_node = self._read_typed_value(m.get('type'), m_addr, dump_reader, depth + 1, _visited)
+                if child_node:
+                    child_node.name = m_name
+                    children.append(child_node)
+
             if visit_key is not None:
                 _visited.discard(visit_key)
-            
-            return result
+
+            return ViewNode(
+                name='', type_name=type_name, kind=kind,
+                children=children,
+                address=address,
+                byte_size=type_info.get('byte_size', 0)
+            )
 
         return None
     
@@ -786,17 +1018,10 @@ class ElftoolsParser(ELFParser):
         return result
 
     def get_variable_type(self, name: str) -> Optional[Dict[str, Any]]:
-        """获取全局变量的 DWARF 类型信息（懒加载：首次查询时按需解析）。
+        """Deprecated: use get_var_type() instead.
 
-        返回类型信息字典，包含 kind、name、byte_size 等字段。
-        对于指针类型，ref_type 包含被指向类型的完整信息。
-        对于 typedef 类型，ref_type 包含被 typedef 的真实类型。
-
-        Args:
-            name: 变量名
-
-        Returns:
-            类型信息字典，如果变量不在 DWARF 中则返回 None
+        This method is kept for backward compatibility. External callers
+        (e.g. FreeRTOS plugin) should migrate to get_var_type().
         """
         return self.get_var_type(name)
 
