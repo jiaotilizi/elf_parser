@@ -171,6 +171,8 @@ class ThreadXV6Plugin(RTOSPlugin):
         thread_addr = accessor.address
 
         state = accessor.get_int('tx_thread_state')
+        stack_start = accessor.get_ptr('tx_thread_stack_start')
+        stack_size = accessor.get_int('tx_thread_stack_size')
         result = {
             'address': thread_addr,
             'magic': thread_addr,
@@ -178,8 +180,9 @@ class ThreadXV6Plugin(RTOSPlugin):
             'state': state,
             'priority': accessor.get_int('tx_thread_priority'),
             'run_count': accessor.get_int('tx_thread_run_count'),
-            'stack_start': accessor.get_ptr('tx_thread_stack_start'),
-            'stack_size': accessor.get_int('tx_thread_stack_size'),
+            'stack_start': stack_start,
+            'stack_end': stack_start + stack_size if stack_start and stack_size else 0,
+            'stack_size': stack_size,
             'stack_current': accessor.get_ptr('tx_thread_stack_ptr'),
             'stack_high_water': 0,
             'current_pc': 0,
@@ -307,7 +310,7 @@ class ThreadXV6Plugin(RTOSPlugin):
             'address': event_addr,
             'magic': event_addr,
             'name': accessor.get_string('tx_event_flags_group_name'),
-            'flags': accessor.get_int('tx_event_flags_group_flags'),
+            'flags': accessor.get_int('tx_event_flags_group_current'),
             'suspended_count': accessor.get_int('tx_event_flags_group_suspended_count'),
         }
     

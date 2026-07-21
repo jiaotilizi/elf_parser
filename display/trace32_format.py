@@ -201,6 +201,48 @@ class Trace32Display(DisplayBase):
             
             print(f"{magic}{available_str}{total_str}{name}")
 
+    def show_stack(self, data: List[Dict]):
+        print("\nThreadX.Stack")
+        print("=" * 110)
+        print("____________________________name|low______high____|sp__________%|lowest___spare____max_|0___10___20___30___40___50___60___70___80___90__100|")
+        
+        for item in data:
+            name = item.get('name', '')[:30].rjust(30)
+            stack_start = item.get('stack_start', 0)
+            stack_end = item.get('stack_end', 0)
+            if stack_start > stack_end:
+                low = stack_end
+                high = stack_start
+            else:
+                low = stack_start
+                high = stack_end
+            
+            sp = item.get('stack_current', 0) or item.get('stack_ptr', 0)
+            
+            stack_size = item.get('stack_size', 0)
+            if stack_size <= 0:
+                stack_size = abs(high - low)
+            
+            stack_high_water = item.get('stack_high_water', 0)
+            if stack_high_water > 0 and stack_size > 0:
+                used = stack_size - stack_high_water
+                usage = used / stack_size * 100
+            else:
+                usage = item.get('stack_usage', 0)
+            
+            lowest = low if low > 0 else 0
+            spare = stack_high_water if stack_high_water > 0 else 0
+            
+            progress_bar = ''
+            usage_int = int(usage)
+            for i in range(0, 101, 10):
+                if usage_int >= i:
+                    progress_bar += '#'
+                else:
+                    progress_bar += '-'
+            
+            print(f"{name}|{low:08X} {high:08X}|{sp:08X} {usage:>4.1f}%|{lowest:08X} {spare:08X} {usage_int:>3}%|{progress_bar}|")
+
     def show_resource(self, resource_type: str, data: List[Dict], metadata: ResourceMetadata):
         if resource_type == 'tasks':
             self.show_tasks(data)
@@ -218,6 +260,8 @@ class Trace32Display(DisplayBase):
             self.show_block_pools(data)
         elif resource_type == 'byte_pools':
             self.show_byte_pools(data)
+        elif resource_type == 'stack':
+            self.show_stack(data)
 
     def show_detail(self, resource_type: str, address: int):
         pass
