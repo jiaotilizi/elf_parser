@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 _ISF_HEADER_FORMAT = '<4sIIIQQQQQQQQQQQQQ'
 _ISF_HEADER_SIZE = struct.calcsize(_ISF_HEADER_FORMAT)
 _ISF_MAGIC = b'ISF\x00'
-_ISF_VERSION = 2
+_ISF_VERSION = 3
 
 # Meta format: arch(1) + bits(1) + endian(1) + padding(1)
 #   arch: 'A'=ARM, '6'=ARM64
@@ -163,6 +163,9 @@ class StringPool:
     Strings are NOT decoded during loading. The .decode('utf-8') is deferred
     until get() is called, and hot strings are cached via a simple array cache.
     All string references stay as memoryview slices into the mmap buffer.
+
+    ISF v3 format: count(8) + offsets[count * 8] + lengths[count * 4] + data[]
+    This avoids null-terminator scanning during loading.
     """
 
     __slots__ = ('_pool_mv', '_data_offsets', '_lengths', '_count', '_cache')
@@ -175,20 +178,19 @@ class StringPool:
             raise ValueError(
                 f"String pool count {self._count} exceeds safety limit")
 
-        # Pre-compute data offsets and lengths to avoid null-terminator scan
-        # on every decode call
+        # ISF v3: Read offsets and lengths directly from stored tables
+        # Format: count(8) + offsets[count*8] + lengths[count*4] + data[]
+        offsets_table_size = 8 + self._count * 8
+        lengths_table_size = self._count * 4
+        data_start = offsets_table_size + lengths_table_size
+
         self._data_offsets = []
         self._lengths = []
-        offsets_table_size = 8 + self._count * 8
         for i in range(self._count):
             off = struct.unpack_from('<Q', self._pool_mv, 8 + i * 8)[0]
-            data_start = offsets_table_size + off
-            # Find null terminator (one-time scan during init)
-            end = data_start
-            while end < len(self._pool_mv) and self._pool_mv[end] != 0:
-                end += 1
-            self._data_offsets.append(data_start)
-            self._lengths.append(end - data_start)
+            length = struct.unpack_from('<I', self._pool_mv, offsets_table_size + i * 4)[0]
+            self._data_offsets.append(data_start + off)
+            self._lengths.append(length)
 
         # Simple array cache (O(1) lookup, no lru_cache overhead)
         self._cache: List[Optional[str]] = [None] * self._count
@@ -324,6 +326,9 @@ class DwarffiParser(ELFParser):
             except Exception:
                 pass
 
+            # ---- Build fast types lookup dict (dffi.types is very slow for key lookup) ----
+            types_lookup = {name: dtype for name, dtype in dffi.types.items()}
+
             # ---- Collect symbols ----
             symbols_data: List[Dict[str, Any]] = []
             for sym_name in dffi.symbols:
@@ -345,8 +350,8 @@ class DwarffiParser(ELFParser):
                         if ti_kind in ('struct', 'union'):
                             kind = 1
                             type_name = type_info.get('name')
-                            if type_name in dffi.types:
-                                size = dffi.types[type_name].size
+                            if type_name in types_lookup:
+                                size = types_lookup[type_name].size
                         elif ti_kind == 'array':
                             kind = 2
                             element_type_info = type_info.get('subtype') or type_info.get('element_type')
@@ -354,8 +359,8 @@ class DwarffiParser(ELFParser):
                                 element_type = element_type_info.get('name', '')
                             element_count = type_info.get('count', 0) or type_info.get('element_count', 0)
                             type_name = element_type
-                            if element_type and element_type in dffi.types:
-                                size = dffi.types[element_type].size * element_count
+                            if element_type in types_lookup:
+                                size = types_lookup[element_type].size * element_count
                         elif ti_kind.startswith('ptr_'):
                             kind = 3
                             type_name = type_info.get('name')
@@ -399,11 +404,13 @@ class DwarffiParser(ELFParser):
                 _intern(td_target)
 
             str_offsets: List[int] = []
+            str_lengths: List[int] = []
             str_data = bytearray()
             for s in str_list:
+                encoded = s.encode('utf-8')
                 str_offsets.append(len(str_data))
-                str_data.extend(s.encode('utf-8'))
-                str_data.append(0)
+                str_lengths.append(len(encoded))
+                str_data.extend(encoded)
             
             if len(str_list) != len(str_offsets):
                 logger.warning(f"String list/offsets mismatch: {len(str_list)} vs {len(str_offsets)}")
@@ -459,7 +466,7 @@ class DwarffiParser(ELFParser):
 
             types_data_size = sum(len(record) for _, record in type_records)
             symbols_data_size = sum(len(record) for _, record in symbol_records)
-            string_pool_size = 8 + len(str_offsets) * 8 + len(str_data)
+            string_pool_size = 8 + len(str_offsets) * 8 + len(str_lengths) * 4 + len(str_data)
 
             current_offset = _ISF_HEADER_SIZE
 
@@ -547,6 +554,8 @@ class DwarffiParser(ELFParser):
                 f.write(struct.pack('<Q', len(str_offsets)))
                 for off in str_offsets:
                     f.write(struct.pack('<Q', off))
+                for length in str_lengths:
+                    f.write(struct.pack('<I', length))
                 f.write(str_data)
 
             # ---- Compute CRC32 and write checksum ----
