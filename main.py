@@ -138,6 +138,16 @@ def analyze(elf_path: str, dump_path: str, profile_name: str) -> dict:
     print(f"Loading plugins from profile...")
     plugin_registry = PluginRegistry()
     plugins = plugin_registry.get_plugins_for_profile(profile)
+
+    arch_name = profile.get('arch', '')
+    arch_plugin = None
+    if arch_name:
+        print(f"Loading arch plugin for: {arch_name}")
+        arch_plugin = plugin_registry.get_arch_plugin(arch_name)
+        if arch_plugin:
+            print(f"Loaded arch plugin: {arch_plugin.name}")
+        else:
+            print(f"No arch plugin found for {arch_name}")
     
     context = PluginContext({
         'elf_parser': elf_parser,
@@ -146,6 +156,7 @@ def analyze(elf_path: str, dump_path: str, profile_name: str) -> dict:
         'results': {},
         'config': {},
         'plugins': plugins,
+        'arch_plugin': arch_plugin,
     })
     
     print(f"Initializing plugins...")
@@ -246,12 +257,6 @@ def dump_symbol(elf_parser, dump_reader, symbol_name: str):
     print(f"  Size: {symbol['size']} bytes")
     print(f"  Type: {symbol['type']}")
 
-    # print(symbol)
-    l1 = elf_parser.read_symbol_tree(symbol_name, dump_reader, max_depth=1)
-    print(l1)
-    # l2 = elf_parser.read_symbol_tree(symbol_name, dump_reader, max_depth=2)
-    # print(l2)
-    
     if symbol['size'] > 0:
         raw_data = dump_reader.read_memory(symbol['address'], symbol['size'])
         if raw_data:

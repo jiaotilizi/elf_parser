@@ -38,7 +38,7 @@ class PluginRegistry:
     or get_plugins_for_profile().
     """
 
-    _PLUGIN_DIRS = ['rtos', 'module']
+    _PLUGIN_DIRS = ['rtos', 'module', 'arch']
 
     def __init__(self, plugins_dir: str = None):
         if not plugins_dir:
@@ -99,11 +99,16 @@ class PluginRegistry:
         from plugins.rtos.base import RTOSPlugin
         from plugins.module.base import ModulePlugin
 
+        try:
+            from plugins.arch.base import ArchPlugin
+        except ImportError:
+            ArchPlugin = None
+
         for attr_name in dir(module):
             attr = getattr(module, attr_name)
             if not isinstance(attr, type) or not issubclass(attr, Plugin) or attr is Plugin:
                 continue
-            if attr.__name__ in ('RTOSPlugin', 'ModulePlugin', 'Plugin'):
+            if attr.__name__ in ('RTOSPlugin', 'ModulePlugin', 'ArchPlugin', 'Plugin'):
                 continue
 
             plugin_type = 'unknown'
@@ -111,6 +116,8 @@ class PluginRegistry:
                 plugin_type = 'rtos'
             elif issubclass(attr, ModulePlugin):
                 plugin_type = 'module'
+            elif ArchPlugin and issubclass(attr, ArchPlugin):
+                plugin_type = 'arch'
 
             return {
                 'path': plugin_path,
@@ -208,3 +215,27 @@ class PluginRegistry:
                 logger.warning(f"Failed to load plugin {plugin_path}: {e}")
 
         return plugins
+
+    def get_arch_plugin(self, arch_name: str):
+        """Load an architecture plugin by architecture name.
+
+        Args:
+            arch_name: Architecture name (e.g., 'armv7-m', 'armv7-r')
+
+        Returns:
+            Instantiated ArchPlugin object, or None if no matching plugin found.
+        """
+        for plugin_path, info in self._plugin_cache.items():
+            if info.get('type') != 'arch':
+                continue
+
+            try:
+                plugin = self._instantiate_plugin(plugin_path, info)
+                if plugin.matches_arch(arch_name):
+                    logger.debug(f"Loaded arch plugin for {arch_name}: {plugin.name}")
+                    return plugin
+            except Exception as e:
+                logger.debug(f"Failed to load arch plugin {plugin_path}: {e}")
+
+        logger.debug(f"No arch plugin found for {arch_name}")
+        return None

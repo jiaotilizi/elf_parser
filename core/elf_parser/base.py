@@ -140,6 +140,17 @@ class ELFParser(ABC):
                 return member.get('offset', default)
         return default
 
+    def _get_elffile(self) -> Optional[Any]:
+        """Return the underlying ELF file object for backend-specific operations.
+
+        This is used by architecture plugins (e.g. ARMv7-R) to access
+        architecture-specific ELF sections like .debug_frame and .ARM.exidx.
+
+        Returns None if the parser backend does not expose a raw ELF file
+        (e.g. dwarffi uses ISF cache which does not include these sections).
+        """
+        return None
+
     @abstractmethod
     def read_struct_tree(self, struct_type_name: str, address: int, dump_reader, 
                          max_depth: int = 1) -> Optional[Dict[str, Any]]:

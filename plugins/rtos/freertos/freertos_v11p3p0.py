@@ -936,7 +936,7 @@ class FreeRTOSV11Plugin(RTOSPlugin):
         return heap_info
     
     def execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        return {
+        result = {
             'tasks': self.get_resource('tasks', context),
             'semaphores': self.get_resource('semaphores', context),
             'mutexes': self.get_resource('mutexes', context),
@@ -945,3 +945,70 @@ class FreeRTOSV11Plugin(RTOSPlugin):
             'events': self.get_resource('events', context),
             'heap': self.get_heap_info(context),
         }
+
+        self.enhance_threads_with_arch(result['tasks'], context)
+
+        smp_info = self.get_smp_info(context['elf_parser'], context['dump_reader'])
+        result['smp_info'] = smp_info
+
+        if smp_info['is_smp']:
+            task_by_addr = {t['address']: t for t in result['tasks']}
+            for core_id, thread_addr in enumerate(smp_info['current_threads']):
+                if thread_addr and thread_addr in task_by_addr:
+                    task_by_addr[thread_addr]['running_on_core'] = core_id
+
+        return result
+
+    def get_stack_frame_layout(self, arch_name: str) -> Optional[Dict[str, int]]:
+        layouts = {
+            'armv7-m': {
+                'r0': 0, 'r1': 4, 'r2': 8, 'r3': 12,
+                'r12': 16, 'lr': 20, 'pc': 24, 'xpsr': 28,
+                'r4': 32, 'r5': 36, 'r6': 40, 'r7': 44,
+                'r8': 48, 'r9': 52, 'r10': 56, 'r11': 60,
+            },
+            'armv7-r': {
+                'r0': 0, 'r1': 4, 'r2': 8, 'r3': 12,
+                'r12': 16, 'lr': 20, 'pc': 24, 'cpsr': 28,
+                'r4': 32, 'r5': 36, 'r6': 40, 'r7': 44,
+                'r8': 48, 'r9': 52, 'r10': 56, 'r11': 60,
+            },
+        }
+        for key, layout in layouts.items():
+            if key in arch_name.lower():
+                return layout
+        return None
+
+    def get_fpu_frame_layout(self, arch_name: str) -> Optional[Dict[str, int]]:
+        if 'armv7-m' in arch_name.lower():
+            offsets = {}
+            offset = 64
+            for i in range(32):
+                offsets[f'S{i}'] = offset
+                offset += 4
+            offsets['FPSCR'] = offset
+            return offsets
+        return None
+
+    def get_smp_info(self, elf_parser, dump_reader) -> Dict[str, Any]:
+        current_sym = elf_parser.get_symbol_by_name('pxCurrentTCB')
+        if not current_sym:
+            return {'is_smp': False, 'core_count': 1, 'current_threads': [None]}
+
+        ptr_size = 4 if elf_parser.is_32bit() else 8
+        sym_size = current_sym.get('size', ptr_size)
+
+        if sym_size <= ptr_size:
+            cur = dump_reader.read_pointer_by_size(
+                current_sym['address'], byte_size=ptr_size)
+            return {'is_smp': False, 'core_count': 1, 'current_threads': [cur]}
+
+        core_count = sym_size // ptr_size
+        current_threads = []
+        for i in range(core_count):
+            addr = current_sym['address'] + i * ptr_size
+            cur = dump_reader.read_pointer_by_size(addr, byte_size=ptr_size)
+            current_threads.append(cur)
+
+        return {'is_smp': True, 'core_count': core_count,
+                'current_threads': current_threads}

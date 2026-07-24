@@ -1250,6 +1250,14 @@ class ElftoolsParser(ELFParser):
     
     def get_address_size(self) -> int:
         return self._address_size
+
+    def _get_elffile(self):
+        """Return the underlying pyelftools ELFFile for arch-plugin use.
+
+        This provides access to architecture-specific ELF sections
+        (.debug_frame, .ARM.exidx) for DWARF CFI and EHABI unwinding.
+        """
+        return self.elffile
     
     def match_keywords(self, keywords: List[str], check_elf_only: bool = False) -> List[str]:
         unmatched = []

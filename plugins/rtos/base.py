@@ -115,3 +115,94 @@ class RTOSPlugin(Plugin):
                 'show_address': True,
             }
         }
+
+    def get_stack_frame_layout(self, arch_name: str) -> Optional[Dict[str, int]]:
+        """返回寄存器在栈上的偏移映射
+
+        这是RTOS与Arch的唯一耦合点，但只是数据(偏移表)，不是代码依赖。
+        栈帧布局由RTOS的port汇编代码定义。
+
+        Args:
+            arch_name: 架构名称（如 'armv7-m', 'armv7-r'）
+
+        Returns:
+            寄存器名到偏移的映射，如 {'r0': 36, 'r1': 40, ..., 'pc': 60}
+        """
+        return None
+
+    def get_fpu_frame_layout(self, arch_name: str) -> Optional[Dict[str, int]]:
+        """返回FPU寄存器在栈上的偏移映射"""
+        return None
+
+    def get_smp_info(self, elf_parser, dump_reader) -> Dict[str, Any]:
+        """获取SMP信息
+
+        Returns:
+            {
+                'is_smp': False,
+                'core_count': 1,
+                'current_threads': [thread_addr, ...]  # 每个core的当前线程
+            }
+        """
+        return {'is_smp': False, 'core_count': 1, 'current_threads': [None]}
+
+    def enhance_threads_with_arch(self, tasks: List[Dict], context: Dict) -> None:
+        """使用arch插件增强任务信息(寄存器+调用栈)
+
+        此方法在tasks基本解析完成后调用，原地修改task dict。
+        如果context中没有arch_plugin，则静默跳过(优雅降级)。
+
+        Args:
+            tasks: 任务列表
+            context: 分析上下文
+        """
+        arch_plugin = context.get('arch_plugin')
+        if not arch_plugin:
+            return
+
+        arch_name = context['profile'].get('arch', '') or context['profile'].get('chip', {}).get('arch', '')
+        frame_offsets = self.get_stack_frame_layout(arch_name)
+        if not frame_offsets:
+            return
+
+        is_32bit = context['elf_parser'].is_32bit()
+        dump_reader = context['dump_reader']
+        elf_parser = context['elf_parser']
+        reg_info = arch_plugin.get_register_info()
+        fp_reg = reg_info.get('frame_pointer_reg', 'r7')
+
+        smp_info = context.get('_smp_info', {})
+        current_threads = smp_info.get('current_threads', [None])
+
+        task_by_addr = {t['address']: t for t in tasks}
+
+        for task in tasks:
+            sp = task.get('stack_current', 0)
+            if not sp:
+                continue
+            try:
+                registers = arch_plugin.extract_registers(
+                    sp, frame_offsets, dump_reader, is_32bit)
+                task['registers'] = registers
+
+                fp = registers.get(fp_reg, 0)
+                start_pc = registers.get('pc', 0)
+                task['backtrace'] = arch_plugin.unwind_stack(
+                    sp, fp, dump_reader, elf_parser, is_32bit,
+                    start_pc=start_pc if start_pc else None)
+
+                fpu_offsets = self.get_fpu_frame_layout(arch_name)
+                if fpu_offsets:
+                    fpu_registers = arch_plugin.extract_fpu_registers(
+                        sp, fpu_offsets, dump_reader, is_32bit)
+                    task['fpu_registers'] = fpu_registers
+
+            except Exception as e:
+                logger.debug("Thread %s arch analysis failed: %s",
+                            task.get('name', '?'), e)
+                task['registers'] = {}
+                task['backtrace'] = []
+
+        for core_id, thread_addr in enumerate(current_threads):
+            if thread_addr and thread_addr in task_by_addr:
+                task_by_addr[thread_addr]['running_on_core'] = core_id
